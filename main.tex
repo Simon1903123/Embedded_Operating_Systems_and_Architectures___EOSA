@@ -59,6 +59,7 @@
 \usepackage{multirow}
 % per creare i tree di directory
 \usepackage{dirtree}
+\setcounter{tocdepth}{4}
 
 % per le icone a fianco dei titoli di sezione
 \usepackage{etoolbox}
@@ -142,8 +143,7 @@
 \include{contents/TitlePage}
 \afterpage{\blankpage}
 
-\tableofcontents
-%\begin{adjustwidth}{0cm}{1.8cm}
+\tableofcontents%\begin{adjustwidth}{0cm}{1.8cm}
 %\makeatletter
 %\@starttoc{toc}
 %\makeatother
@@ -151,6 +151,7 @@
 
 %\include{contents/SampleChapters}
 \include{contents/week-01_Intro_and_toolchain}
+\include{contents/week-02_Boot_and_CPU_Configuration}
 
 \end{document}
 % -----------------------------------------------------------------
