@@ -1,179 +1,153 @@
 \chapter{Boot and CPU Configuration}
 
 \section{Introduction to Low-Level CPU Control}
-In the previous phase, we built a tiny program for a Cortex-M3, ran it in QEMU, and saw it print one line. Several pieces of that program were handed to us as-is: the linker script and the startup code. The primary goal of this phase is to stop trusting those pre-built components, move beyond simply using the toolchain, and take direct control of the CPU[cite: 25]. 
+In the previous week, we built a tiny program for a Cortex-M3, ran it in QEMU, and saw it print one line[cite: 101]. Several pieces of that program were handed to us as-is: the linker script that decided where everything goes in memory, and the startup code that ran before \texttt{main()}. We were asked to trust them. This phase is about stopping that trust and building those components from scratch[cite: 101].
 
-By the end of this phase, developers will understand every instruction the CPU executes between power-on and the first line of \texttt{main()}[cite: 25]. The development process is structured around three core units:
-\begin{itemize}
-    \item \textbf{Where code and data live:} Understanding the memory layout and directing the linker script to place code and data in the correct physical locations[cite: 25].
-    \item \textbf{Taking control of the CPU:} Controlling the boot process through an assembly startup script, configuring faults, and using a debugger[cite: 25].
-    \item \textbf{Life without an OS underneath:} Operating in a freestanding environment to comprehend bare-metal limitations, splitting the program into privileged and unprivileged parts, and building a system call (\texttt{svc})[cite: 25].
-\end{itemize}
+By the end of this phase, developers will understand, and will have written, every instruction that the CPU executes between power-on and the first line of \texttt{main()}[cite: 101]. The development process covers knowing where each piece of a C program lives in the chip's memory and why, how the CPU finds its first instruction, how to watch the CPU one instruction at a time with a debugger, how to configure the CPU so that errors are reported clearly instead of silently, and what it means to run C with nothing underneath it (no C library, no operating system)[cite: 101]. Finally, the program will be split into a privileged and an unprivileged part, building the smallest possible version of a system call (\texttt{svc})[cite: 101].
+
+The process is organized into three core units[cite: 101]:
+\begin{enumerate}
+    \item \textbf{Where code and data live:} The kinds of memory a microcontroller has, the Cortex-M memory map, how the linker script turns that map into decisions, and what the CPU does at reset[cite: 101].
+    \item \textbf{Taking control of the CPU:} The debugger, the CPU registers, just enough ARM assembly to read and write boot code, and writing the reset handler step by step (stack, \texttt{.data}, \texttt{.bss}, vector table, fault configuration, priorities)[cite: 101].
+    \item \textbf{Life without an OS underneath:} What ``freestanding'' C means, how the program prints without a C library, privileged and unprivileged code, and the \texttt{svc} instruction as a system call[cite: 101].
+\end{enumerate}
 
 \subsection{Where You Start and Where You End}
-All the work in this phase begins on a stripped-down starting skeleton. The original C startup code has been removed. In its place is a new, almost empty assembly file (\texttt{boot/startup.s}). It contains only the two words the CPU absolutely needs at reset (the stack address and the PC), and a \texttt{Reset\_Handler} that does nothing except call \texttt{main()} and loop forever.
+All the in-class work happens on top of a starting skeleton, specifically the folder \texttt{week-02/base/}[cite: 101]. It is derived from the previous week with one major difference: the original C startup code, which did all the setup work, has been thrown away[cite: 101]. 
 
-This minimal setup exposes a critical physical reality. If we try to run a program that prints a standard string literal and an initialized global character array (which lives in the \texttt{.data} section), the output will be incomplete:
+In its place is a new, almost empty assembly file (\texttt{base/boot/startup.s})[cite: 101]. It contains only the two words the CPU absolutely needs at reset (a stack address and the address of the first instruction), and a \texttt{Reset\_Handler} that does nothing except call \texttt{main()} and then loop forever if \texttt{main()} ever returns[cite: 101].
 
+The program in \texttt{base/src/main.c} attempts to print two lines[cite: 101]:
+\begin{enumerate}
+    \item A standard string literal[cite: 101].
+    \item \texttt{data\_message}, a global character array initialized with the text \texttt{"main: this text lives in .data\textbackslash{}n"}[cite: 101].
+\end{enumerate}
+
+If we build and run the base skeleton (\texttt{make} and \texttt{make run}), we see only one line[cite: 101]:
 \begin{lstlisting}[language=bash]
-make
-make run
-
 main: hello from the base
 \end{lstlisting}
 
-The second line is missing. Nothing crashes, and no error is printed: the second call simply prints an empty string. Understanding exactly why this happens---and writing the assembly code to fix it---is the primary objective of this chapter. 
+The second line is missing[cite: 102]. Nothing crashes, and no error is printed: the second call simply prints an empty string[cite: 102]. Understanding exactly why this happens is the goal of Unit 1, and fixing it is the first objective in Unit 2[cite: 102]. 
 
-Once the boot code, memory initialization, and fault handlers are correctly implemented from scratch, the final program will successfully print:
-\begin{lstlisting}
+By the end of the week, the fully implemented program will print four distinct lines, each serving as evidence that a specific piece of the low-level architecture is in place[cite: 102]:
+\begin{lstlisting}[language=bash]
 main: privileged hello
 main: this text lives in .data
 SVC_Handler: privileged code printing on behalf of unprivileged code
 BusFault_Handler: a bus fault happened
 \end{lstlisting}
-\textit{Note: As established previously, QEMU does not exit automatically when the program finishes because the bare-metal image enters an infinite spin loop.}
+
+\textit{Practical Note:} QEMU does not exit automatically when the program finishes because the bare-metal image enters an infinite spin loop (there is nowhere to return to)[cite: 102]. It must be manually stopped using \texttt{Ctrl-C}[cite: 102].
 
 \section{Memory Technologies in Embedded Systems}
-When designing an operating system or bare-metal software, it is crucial to understand the different memory technologies available on the hardware, as this dictates where instructions and variables are placed. 
+When writing a C program on a standard laptop, developers rarely think about \textit{which} memory their variables reside in. On a microcontroller, this is a critical consideration because the chip contains two very different kinds of memory, and each piece of the program can live in only one of them[cite: 102].
 
 \subsection{SRAM (Static RAM): The Working Memory}
+The first kind of memory is \textbf{SRAM} (Static RAM)[cite: 102]. 
 \begin{itemize}
-    \item SRAM sits directly on the CPU's memory bus, meaning every byte has a specific address and can be accessed using standard load/store instructions[cite: 66].
-    \item It is extremely fast; on a microcontroller, a single access typically takes about one clock cycle[cite: 66].
-    \item It is byte-writable, allowing the CPU to change single bytes at any time[cite: 66].
-    \item It is volatile, meaning all data is lost when power is removed, and its contents are entirely undefined (random bits, not zeros) at power-on[cite: 66].
-    \item Due to its writable nature, SRAM is the designated location for anything that changes during program execution, such as variables and the stack[cite: 66, 69].
+    \item \textbf{Direct Bus Connection:} SRAM is connected directly to the CPU's memory bus[cite: 102]. Every byte in it has a specific address, and the CPU reads or writes any byte using ordinary load or store instructions (the same instructions the compiler uses for \texttt{x = y;})[cite: 102].
+    \item \textbf{Speed:} It is extremely fast; on a microcontroller, one access typically takes about one clock cycle[cite: 102].
+    \item \textbf{Writeability:} You can write to a single byte at any time, as often as you like[cite: 102].
+    \item \textbf{Volatility:} Its primary weakness is that it is \textbf{volatile}: when power goes off, its content is completely lost[cite: 102]. Furthermore, when power comes back on, the content is not zero; it is \textbf{undefined}, consisting of a random pattern of bits left by the physical state of the memory cells[cite: 102].
 \end{itemize}
-
+Because of these characteristics, SRAM is the designated location for everything that \textit{changes} while the program runs, specifically your variables and the stack[cite: 102].
 \subsection{NOR Flash: Execute-in-Place Memory}
-\begin{itemize}
-    \item Like SRAM, NOR Flash sits on the memory bus and can be addressed byte by byte, allowing fast random-access reads[cite: 67].
-    \item Because it is on the address bus, the CPU can fetch and execute instructions directly from it without needing to copy the program to RAM first[cite: 67]. This feature is known as execute-in-place (XIP)[cite: 67].
-    \item It is non-volatile, ensuring the program remains intact after power-off[cite: 67].
-    \item Writing to NOR Flash is complex and cannot be done with simple store instructions[cite: 67]. It requires first erasing an entire sector (turning all bits to 1) and then programming specific words (turning bits from 1 to 0), a process that takes microseconds to milliseconds[cite: 67].
-    \item Consequently, at runtime, NOR Flash is effectively treated as read-only memory[cite: 67]. It is used to store the code itself and read-only constants (like string literals)[cite: 69].
-\end{itemize}
+The second kind of memory is \textbf{NOR flash}. NOR flash sits on the memory bus, similar to a ROM: every word has a specific address, allowing the CPU to read any of them quickly and in any order. Because of this, the CPU can fetch instructions directly from the flash and execute them right where they are stored, without needing to copy the program into RAM first. This capability is known as \textbf{execute-in-place} (XIP). 
 
-\subsection{NAND Flash and Block Devices}
-\begin{itemize}
-    \item NAND Flash is the technology used in SSDs, hard disks, and SD cards[cite: 68].
-    \item Unlike NOR Flash, it does not sit on the CPU's memory bus and is instead accessed through a separate controller[cite: 68].
-    \item Data cannot be addressed byte by byte; it must be accessed in large blocks or pages (e.g., 512 bytes to 4 KB)[cite: 68].
-    \item Because it lacks direct memory addressing, the CPU cannot fetch instructions from NAND Flash, nor can it read single variables directly[cite: 68].
-    \item To execute a program stored on a NAND device, an OS loader must first copy the blocks into RAM, which is the standard process for desktop computers[cite: 68]. Microcontrollers generally skip this step by running their programs directly from NOR Flash[cite: 68].
-\end{itemize}
+NOR flash is \textbf{non-volatile}, meaning your program remains intact even after the board is unplugged or powered off. The price for these features is paid when writing data. Writing to flash is not a simple store instruction. It requires a two-step process: first, an entire \textbf{sector} (a block of a few kilobytes) must be \textbf{erased}, setting every bit within it to 1. Then, individual words can be \textbf{programmed}, which only turns bits from 1 to 0. Both operations take microseconds to milliseconds and require a special command sequence sent to the flash controller. Consequently, for a running program, NOR flash is effectively \textbf{read-only}.
+
+\subsection{Contrasting with NAND Flash and Block Devices}
+It is worth contrasting this with the storage technologies commonly found in standard laptops, such as \textbf{NAND flash} (used in SD cards and SSDs) and hard disks. 
+
+These storage devices are \textbf{not} on the memory bus. They are accessed through a controller, one \textbf{block} (or page) at a time (typically 512 bytes to 4 KB). A block has no CPU address. The CPU cannot fetch an instruction from it, nor can it read a single variable directly: the contents must first be copied into RAM and then used from there. 
+
+This is exactly what a desktop operating system does when you start a program: the OS \textbf{loader} copies the executable from the SSD into RAM before running it. A microcontroller, however, has no loader. Its program already sits in NOR flash, at the exact address it runs from.
+
 \subsection{Applying Constraints to C Code}
-Given the physical characteristics of these different memory technologies, an operating system must correctly place every element of a C program based on its requirements[cite: 5]. The following table summarizes the hardware constraints:
+Put these facts side by side, and you get the rules for a C program on a microcontroller:
 
-\begin{table}[h]
+\begin{table}[h!]
 \centering
 \begin{tabular}{|l|l|l|l|l|}
 \hline
-\textbf{Technology} & \textbf{On the bus?} & \textbf{Execute from it?} & \textbf{Write at run time?} & \textbf{Keeps data?} \\ \hline
+\textbf{Technology} & \textbf{On the bus?} & \textbf{Execute from it?} & \textbf{Write at run time?} & \textbf{Keeps data at power-off?} \\ \hline
 SRAM & yes & yes & yes, bytes & no \\ \hline
 NOR flash & yes & yes (XIP) & no (erase/program) & yes \\ \hline
 NAND / disk & no (blocks) & no & through a driver & yes \\ \hline
 \end{tabular}
 \end{table}
 
+Based on these constraints:
 \begin{itemize}
-    \item \textbf{Code and constants:} Instructions and read-only data (like string literals) should remain in NOR Flash and be executed or read directly from there[cite: 5].
-    \item \textbf{Variables (uninitialized):} Standard uninitialized variables that need to be updated at runtime must live in SRAM[cite: 6].
-    \item \textbf{Variables (initialized):} Variables defined with an initial value (e.g., \texttt{int x = 5;}) present a unique challenge. The variable lives in RAM, but RAM is random at power-on. Therefore, the initial value \texttt{5} is stored non-volatilely in NOR Flash, and something must explicitly copy it into RAM at boot, before \texttt{main()} runs[cite: 6].
+    \item \textbf{Code and Constants:} Code stays in flash and runs directly from there. Constants (anything declared \texttt{const}, and string literals such as \texttt{"hello"}) also stay in flash and are read in place.
+    \item \textbf{Uninitialized Variables:} Variables must live in RAM because they change.
+    \item \textbf{Initialized Variables:} The interesting case is an \textbf{initialized} variable such as \texttt{int x = 5;}. The variable lives in RAM, but RAM is random at power-on. Therefore, the value \texttt{5} has to come from somewhere that survives power-off (flash). So the \texttt{5} is \textbf{stored in flash}, and something must \textbf{copy it into RAM at boot}, before \texttt{main()} runs and reads \texttt{x}. This missing copy mechanism is the whole reason the base program prints only one line.
 \end{itemize}
 
-\textbf{Crucial Note:} This requirement to manually copy initialized data is the exact reason why the base program from the previous section prints only one line and fails to print the \texttt{.data} string!
+\subsection{The Cortex-M Memory Map}
+The CPU sees a single address space of 4 GB (using 32-bit addresses). On every Cortex-M chip, this space is rigidly divided into regions whose \textit{purpose} is fixed by the ARM architecture. Each chip manufacturer then decides how much real memory or how many devices to put in each region.
 
-\subsection{The Cortex-M3 Memory Map}
-To tell the compiler where to place these different elements, a developer must first thoroughly understand the hardware's memory map. On a 32-bit Cortex-M microprocessor, the CPU sees a single 4 GB physical address space[cite: 6]. The regions within this space are fixed by the ARM architecture, while the chip manufacturer decides how much real memory to put in each region[cite: 6]:
-
-\begin{table}[h]
+\begin{table}[h!]
 \centering
 \begin{tabular}{|l|l|l|}
 \hline
 \textbf{Address range} & \textbf{Region} & \textbf{On \texttt{mps2-an385}} \\ \hline
-\texttt{0x0000\_0000}--\texttt{0x1FFF\_FFFF} & Code & 4 MB at \texttt{0x0}: the program ("FLASH")[cite: 6] \\ \hline
-\texttt{0x2000\_0000}--\texttt{0x3FFF\_FFFF} & SRAM & 4 MB at \texttt{0x2000\_0000}: "RAM"[cite: 6] \\ \hline
-\texttt{0x4000\_0000}--\texttt{0x5FFF\_FFFF} & Peripherals & UART, timers, \dots[cite: 6] \\ \hline
-\texttt{0x6000\_0000}--\texttt{0xDFFF\_FFFF} & External & Not used here[cite: 6] \\ \hline
-\texttt{0xE000\_0000}--\texttt{0xE00F\_FFFF} & CPU registers & Control of the CPU itself[cite: 6] \\ \hline
+\texttt{0x0000\_0000}--\texttt{0x1FFF\_FFFF} & Code & 4 MB at \texttt{0x0}: the program ("FLASH") \\ \hline
+\texttt{0x2000\_0000}--\texttt{0x3FFF\_FFFF} & SRAM & 4 MB at \texttt{0x2000\_0000}: "RAM" \\ \hline
+\texttt{0x4000\_0000}--\texttt{0x5FFF\_FFFF} & Peripherals & UART, timers, \dots \\ \hline
+\texttt{0x6000\_0000}--\texttt{0xDFFF\_FFFF} & External RAM / devices & not used here \\ \hline
+\texttt{0xE000\_0000}--\texttt{0xE00F\_FFFF} & CPU's private registers & control of the CPU itself (at \texttt{0xE000\_E000}) \\ \hline
 \end{tabular}
 \end{table}
 
-Even though we are emulating this hardware in QEMU (where the 4 MB at address 0 is technically just fast RAM pre-loaded with the program image), the emulator enforces these access rules strictly. We treat it as read-only, exactly as we would on a real microcontroller with real flash[cite: 6].
+The code region starts at address 0, and that is where the program goes. SRAM starts at \texttt{0x20000000}. Peripherals such as a serial port live at addresses starting at \texttt{0x40000000}: you talk to them by reading and writing those addresses. The last region, starting at \texttt{0xE0000000}, contains registers that belong to the CPU core itself.
 
-\subsection{The Linker Script: Mapping the Chip}
-The \textbf{Linker Script} (e.g., \texttt{scripts/mps2\_m3.ld}) is the file where we describe the hardware's memory map to the toolchain and provide instructions on how to place our code within it[cite: 71].
+\textit{Emulation Detail:} On the \texttt{mps2-an385} board (and therefore in QEMU), the 4 MB at address 0 is really fast RAM that the board preloads with your program image. It plays the role of flash. You treat it as read-only, exactly as you would on a real microcontroller with real flash.
 
-The script is divided into core sections[cite: 71]:
-\begin{itemize}
-    \item \texttt{MEMORY}: Defines which physical memory regions exist, their start addresses, and their sizes[cite: 71].
-    \item \texttt{SECTIONS}: Instructs the linker on which input sections from the \texttt{.o} files should go into which output regions[cite: 71].
-    \item \texttt{ENTRY}: Defines where execution starts[cite: 71].
-\end{itemize}
+\subsubsection{\texttt{MEMORY}: Defining the Regions}
+In the \texttt{MEMORY} block, each line describes one physical region[cite: 104]: a name you choose (\texttt{FLASH}, \texttt{RAM}), a start address (\texttt{ORIGIN}), a size (\texttt{LENGTH}), and access attributes in parentheses (\texttt{r} for read, \texttt{w} for write, \texttt{x} for execute).
 
-\subsubsection{Defining the Memory Regions}
-The \texttt{MEMORY} block dictates the layout of the available hardware. For example[cite: 72]:
-\begin{verbatim}
-MEMORY {
-  FLASH (rx) : ORIGIN = 0x00000000, LENGTH = 4M
-  RAM (rwx)  : ORIGIN = 0x20000000, LENGTH = 4M
-}
-\end{verbatim}
-Each region declaration includes an identifier (e.g., \texttt{FLASH}), its starting address (\texttt{ORIGIN}), and its total size (\texttt{LENGTH})[cite: 72]. The linker uses this information to verify that the compiled code fits; if the data assigned to a region exceeds its \texttt{LENGTH}, the link process will fail[cite: 72].
-
-The letters in parentheses specify the access rights for that region[cite: 72]:
-\begin{itemize}
-    \item \textbf{r:} Read
-    \item \textbf{w:} Write
-    \item \textbf{x:} Execute
-\end{itemize}
-For instance, \texttt{(rx)} indicates that the \texttt{FLASH} region can be read and executed, but not written to during normal runtime[cite: 72].
-
-\subsubsection{Defining the Memory Regions (Continued)}
-In the \texttt{MEMORY} block, we specify the initial parameters of each physical memory region based on the hardware constraints:
-\begin{itemize}
-    \item We define the starting address of the \texttt{FLASH} region at \texttt{0x00000000}, which is the predefined start of the code section for Cortex-M3 processors[cite: 72]. 
-    \item We define the starting address of the \texttt{RAM} region immediately after, at \texttt{0x20000000}, which is the designated space for static RAM on this architecture[cite: 72].
-\end{itemize}
-
-Every address is written in hexadecimal using 32 bits (8 characters). It is imperative that this description perfectly matches the physical hardware specifications. If a developer erroneously marks a region as writable (\texttt{w}) when the underlying technology is strictly read-only (like NOR Flash), the linker will silently generate the ELF file without raising errors. However, the program will inevitably crash at runtime when it attempts an illegal operation[cite: 72].
+The linker actively uses these \texttt{LENGTH} values to \textbf{check your program}: if what you ask it to place in a region does not fit, the link fails with a clear error instead of producing a broken image that cannot work.
 
 \subsubsection{Symbol Assignments for the Stack Pointer}
-Within the linker script, we can define symbols that the linker will substitute with exact memory addresses during the linking process. A crucial example is calculating the starting address of the stack[cite: 72].
+Immediately following the region definitions, the script calculates and assigns the \texttt{\_estack} symbol:
+\begin{lstlisting}[language=make]
+_estack = ORIGIN(RAM) + LENGTH(RAM);   /* = 0x20400000 */
+\end{lstlisting}
+This value (\texttt{0x20400000}) represents exactly one byte past the last available address in the RAM[cite: 104]. On the Cortex-M architecture, the stack grows \textbf{downwards} (toward lower memory addresses)[cite: 105]. By initializing the stack pointer at the very top of the RAM, the system gives it the most room to grow before running into anything else[cite: 105].
 
-On ARM microprocessors, the stack grows downwards (backwards in memory)[cite: 72, 98]. Therefore, the most efficient approach is to set the initial stack pointer to the very end of the RAM[cite: 72]. In the script, this is done by defining a symbol (e.g., \texttt{\_estack}) and assigning it the value of the RAM's starting address plus its total length[cite: 72]:
+\subsubsection{\texttt{SECTIONS}: Output Sections Built from Input Sections}
+The \texttt{SECTIONS} block is responsible for constructing the \textbf{output sections} of the final ELF executable out of the \textbf{input sections} found in the object files (\texttt{.o})[cite: 105]. 
 
-\begin{verbatim}
-_estack = ORIGIN(RAM) + LENGTH(RAM); 
-\end{verbatim}
-
-\subsubsection{Organizing Output Sections}
-The core function of the linker script is to declare which sections should exist in the final ELF image and what content should be placed inside them[cite: 73]. 
-
-When compiling a C program composed of multiple source files, the compiler produces multiple object files (\texttt{.o}), each divided into various input sections. The linker script uses rules to aggregate these scattered input sections into unified output sections[cite: 73]. 
-
-For example, to organize the executable code, we define a \texttt{.text} output section[cite: 73]:
-\begin{verbatim}
-.text : { 
-    *(.text*) 
-    *(.rodata*) 
-    _etext = . 
+Consider the first two standard output sections:
+\begin{lstlisting}[language=make]
+.isr_vector :
+{
+    . = ALIGN(4);
+    KEEP(*(.isr_vector))
 } > FLASH
-\end{verbatim}
 
+.text :
+{
+    *(.text*)            /* code from every .o          */
+    *(.rodata*)          /* constants, string literals  */
+    _etext = .;
+} > FLASH
+\end{lstlisting}
+
+\textbf{Syntax Breakdown:}
 \begin{itemize}
-    \item \texttt{*(.text*)}: This command tells the linker to examine every input object file (\texttt{*}), find any section whose name starts with \texttt{.text}, and place its contents here[cite: 73]. The wildcard ensures that even if sections are slightly renamed by the compiler, they are correctly included[cite: 73].
-    \item \texttt{*(.rodata*)}: This instructs the linker to take all read-only constants from all object files and append them immediately after the code within this same output section[cite: 73].
-    \item \texttt{\_etext = .}: The dot (\texttt{.}) represents the location counter (the current memory address)[cite: 73]. This line assigns the current address (which corresponds to the end of the \texttt{.text} and \texttt{.rodata} data) to a symbol named \texttt{\_etext}[cite: 73]. This provides a programmatic way to know exactly where the code section finishes in memory[cite: 73].
-    \item \texttt{> FLASH}: Finally, this specifies that the entire \texttt{.text} output section must be placed physically in the region labeled \texttt{FLASH} defined in the \texttt{MEMORY} block[cite: 73].
+    \item \textbf{Rule execution order:} The block \texttt{.text : \{ ... \}} instructs the linker to create a new output section named \texttt{.text}[cite: 105]. Inside the braces, a rule like \texttt{*(.text*)} means: "from every input file (the first \texttt{*}), extract every section whose name matches \texttt{.text*}"[cite: 106].
+    \item \textbf{Section Folding:} The rules are applied in order, and this order dictates the layout in memory: all code first, then all read-only data[cite: 106]. Notice that \texttt{.rodata} does not get its own output section here; the script \textbf{folds} it directly into the \texttt{.text} section[cite: 106].
+    \item \textbf{The Location Counter (\texttt{.}):} The single dot (\texttt{.}) is the \textbf{location counter}: the address the linker is currently at while it places things[cite: 106]. \texttt{. = ALIGN(4)} mathematically rounds the current address up to the next multiple of 4[cite: 106].
+    \item \textbf{Defining boundaries:} \texttt{\_etext = .;} defines a symbol whose value is the current address, effectively marking the end of the executable code[cite: 106].
+    \item \textbf{Placement:} The \texttt{> FLASH} directive at the end says "put this output section in the FLASH region"[cite: 106]. Because \texttt{.isr\_vector} is the first output section placed in FLASH, it ends up at address 0; \texttt{.text} follows right after it[cite: 106].
 \end{itemize}
 
-
 \subsection{Run Address and Load Address: The \texttt{.data} Section}
-For read-only data and executable code (the \texttt{.text} section), memory placement is straightforward because they exclusively reside in Flash memory. Code runs exactly where it is stored. 
+The \texttt{.data} section, which holds initialized global variables, requires something new:
 
-However, writable global variables that are initialized (e.g., \texttt{int x = 5;}) require a different approach. The \texttt{.data} section needs two distinct addresses:
 \begin{lstlisting}[language=make]
 _sidata = LOADADDR(.data);
 .data :
@@ -184,98 +158,91 @@ _sidata = LOADADDR(.data);
 } > RAM AT > FLASH
 \end{lstlisting}
 
-Every output section in the ELF file has two addresses:
+Every output section possesses two distinct memory addresses[cite: 106]:
 \begin{itemize}
-    \item \textbf{VMA (Virtual Memory Address / Run Address):} This is where the program \textit{uses} the section when it runs. For variables, this must be in RAM so their values can be updated.
-    \item \textbf{LMA (Load Memory Address):} This is where the section's bytes are permanently \textit{stored} in the final binary image, which must be in FLASH.
+    \item \textbf{VMA (Virtual Memory Address / Run Address):} Where the program \textit{uses} the section when it runs[cite: 106].
+    \item \textbf{LMA (Load Memory Address):} Where the section's raw bytes are \textit{stored} in the image[cite: 106].
 \end{itemize}
-The line \texttt{> RAM AT > FLASH} explicitly dictates this split. 
 
-\subsubsection{The Linker Does Not Copy Data}
-The linker script also records the addresses the boot code will need: \texttt{\_sdata} and \texttt{\_edata} define the start and end of \texttt{.data} in RAM, while \texttt{\_sidata} points to the flash address where the stored copy of the initial values begins.
+For \texttt{.text}, the two are the same: code runs where it is stored[cite: 106]. For \texttt{.data}, they must differ: the variables are used in RAM, but their initial values have to be stored in flash[cite: 106]. The line \texttt{> RAM AT > FLASH} says exactly this: run address in RAM, load address in FLASH[cite: 106].
 
-The key point is that \textbf{nothing moves the bytes from the LMA to the VMA by itself}. The linker only records the two addresses, and the CPU certainly does not copy anything at reset. \textbf{Your boot code must manually perform the copy}.
+The script also explicitly records the addresses the boot code will need[cite: 107]: \texttt{\_sdata} and \texttt{\_edata} are the start and end of \texttt{.data} in RAM (its VMA range), and \texttt{\_sidata} (\texttt{LOADADDR(.data)}) is the flash address where the stored copy of the initial values begins[cite: 107].
+
+\textbf{The Boot Copy Requirement:} The key point is that \textbf{nothing moves the bytes from the LMA to the VMA by itself}[cite: 107]. The linker only records the two addresses, and the CPU certainly does not copy anything at reset[cite: 107]. Your boot code must do the copy[cite: 107]. 
 
 Here is the resulting memory layout mapped by the script:
-\begin{lstlisting}
+\begin{lstlisting}[language=make]
 FLASH: [.isr_vector][.text + .rodata][copy of .data] <- _sidata
-RAM:   [.data] [.bss] [heap] . . . . . . . [stack v] <- _estack
+RAM:   [.data] [.bss] [heap] . . . . . . . [stack |] <- _estack
         ^ _sdata ^ _sbss
 \end{lstlisting}
 
-\subsection{BSS, Heap, and Stack Layout}
-Other sections of the program must also be defined in the linker script to properly manage the RAM:
+\subsubsection{\texttt{.bss}, Heap, and Stack: RAM With No Stored Image}
+The remaining regions defined in the script exist purely in RAM and require no physical storage in the Flash image[cite: 107]:
+
+\begin{lstlisting}[language=make]
+.bss : { _sbss = .; *(.bss*) *(COMMON) _ebss = .; } > RAM
+.heap : { ... . = . + _Min_Heap_Size; _heap_top = .; } > RAM
+__StackLimit = _estack - _Min_Stack_Size;
+ASSERT(__StackLimit >= _heap_top, "region RAM overflowed: ...")
+\end{lstlisting}
+
 \begin{itemize}
-    \item \textbf{\texttt{.bss} Section:} This section contains uninitialized global variables. Unlike the \texttt{.data} section, it has no LMA content in Flash; the image only records its size[cite: 75]. It is assigned exclusively to RAM, and the boot code is responsible for filling this memory area with zeros using the \texttt{\_sbss} and \texttt{\_ebss} symbols[cite: 75].
-    \item \textbf{Heap and Stack:} If the program utilizes dynamic memory allocation, a heap region must be defined. In standard embedded layouts, the heap grows upwards from the end of the \texttt{.bss} section, while the stack grows downwards from the very end of the RAM (\texttt{\_estack})[cite: 75].
+    \item \textbf{The \texttt{.bss} section:} This section holds variables that start at zero[cite: 107]. There is no point in storing thousands of zeros in the Flash memory, so \texttt{.bss} has \textbf{no stored content} at all; the image only records its size[cite: 107]. The boot code must actively fill the range from \texttt{\_sbss} to \texttt{\_ebss} with zeros at runtime[cite: 107].
+    \item \textbf{The \texttt{.heap} section:} The heap does not contain anything at boot[cite: 107]. It only \textbf{reserves} space[cite: 107]. The statement \texttt{. = . + \_Min\_Heap\_Size} moves the location counter forward by 4 KB, ensuring nothing else can be placed in that memory range[cite: 107].
+    \item \textbf{The Stack:} The stack is not a section at all; it is simply the top 4 KB of RAM[cite: 107]. \texttt{\_\_StackLimit} is defined as \texttt{\_estack} minus \texttt{\_Min\_Stack\_Size}, marking the lowest address the stack is allowed to reach[cite: 107].
 \end{itemize}
 
-\subsubsection{Safety Asserts in the Linker Script}
-To ensure system stability, the linker script can include logical conditions using the \texttt{ASSERT} command[cite: 75]. For instance, an \texttt{ASSERT} can be programmed to verify that the predefined limits of the stack (\texttt{\_StackLimit}) and the top of the heap (\texttt{\_heap\_top}) do not overlap[cite: 75]. If this mathematical condition is violated during compilation, the linker will immediately abort the process and throw an error, preventing a catastrophic memory corruption at runtime[cite: 75].
+\textbf{Safety Asserts:} To prevent catastrophic memory corruption, the script concludes with an \texttt{ASSERT} directive[cite: 107]. This makes the \textbf{link fail} if the calculated top of the heap runs into the stack limit[cite: 107]. This brilliant mechanism turns a memory corruption that would appear at run time (which is notoriously hard to debug) into a clear, immediate error at build time[cite: 107].
 
-\subsection{The Role of Linker-Defined Symbols}
-Symbols defined in the linker script such as \texttt{\_sdata}, \texttt{\_edata}, \texttt{\_sidata}, \texttt{\_sbss}, \texttt{\_ebss}, and \texttt{\_estack} are unusual: they have \textbf{no storage}[cite: 9, 10]. There is no memory cell called \texttt{\_sdata} holding a value. The linker only gives each of them an \textbf{address}, and the address itself \textit{is} the information.
+\subsection{Linker-Defined Symbols Are Addresses, Not Variables}
+Symbols defined in the linker script such as \texttt{\_sdata}, \texttt{\_edata}, \texttt{\_sidata}, \texttt{\_sbss}, \texttt{\_ebss}, and \texttt{\_estack} are unusual: they have \textbf{no storage}[cite: 107]. 
 
-This distinction is critical when using them from C:
+There is no physical memory cell called \texttt{\_sdata} holding a value[cite: 107]. The linker only gives each of them an \textbf{address}, and that address itself \textit{is} the information[cite: 107]. This distinction is critical when using them from C:
+
 \begin{lstlisting}[language=c]
 extern uint32_t _sdata, _edata;   /* "there is something at this address" */
-uint32_t *start = &_sdata;        /* OK: the address (0x20000000)         */
-uint32_t  oops  = _sdata;         /* wrong idea: reads RAM at that address */
+uint32_t *start = &_sdata;        /* OK: gets the address (0x20000000)    */
+uint32_t  oops  = _sdata;         /* WRONG: reads RAM at that address     */
 \end{lstlisting}
 
-You declare them as \texttt{extern} objects only so that C lets you take their address with \texttt{\&}. Reading \texttt{\_sdata} itself would read whatever happens to be in RAM at \texttt{0x20000000}, which is not what you want. In assembly, the same idea is written \texttt{ldr r0, =\_sdata}, which means \texttt{r0 = \&\_sdata;} in C. The boot code uses these symbols as loop bounds to copy data and zero out the BSS[cite: 9, 10].
+You declare them as \texttt{extern} objects only so that C allows you to take their address with the \texttt{\&} operator[cite: 107, 108]. Reading \texttt{\_sdata} directly would read whatever random garbage happens to be in RAM at \texttt{0x20000000}[cite: 108]. 
 
-\subsubsection{Memory Alignment}
-Another critical instruction often found in linker scripts is the \texttt{ALIGN} command. Many RISC processors require instructions and data to be aligned in memory (typically in 4-byte words). If a section ends at an unaligned address, \texttt{ALIGN(4)} inserts padding. Failing to align memory properly will cause the CPU to crash.
+In assembly, the same concept is written as \texttt{ldr r0, =\_sdata}, which is the equivalent of \texttt{r0 = \&\_sdata;} in C[cite: 108]. The boot code relies on these symbols strictly as loop boundaries: copying from \texttt{\_sidata} to \texttt{\_sdata} up to \texttt{\_edata}, writing zeros from \texttt{\_sbss} to \texttt{\_ebss}, and starting the stack exactly at \texttt{\_estack}[cite: 108].
 
-\subsection{Reading the Compilation Results}
-You now know what the linker script \textit{asks} for. You can check what the linker actually \textit{did} using three tools[cite: 10].
+\subsection{Reading the Result: The Map File, \texttt{nm}, and \texttt{objdump -h}}
+You now know what the linker script \textit{asks} for. You can verify what the linker actually \textit{did} using three standard toolchain tools[cite: 108]:
 
-\begin{itemize}
-    \item \textbf{The Map File (\texttt{output.map}):} Generated by passing \texttt{-Map=} in the \texttt{Makefile}. It repeats the \texttt{MEMORY} regions and lists every output section, the input sections inside them, and the load address for \texttt{.data}[cite: 10].
-    \item \textbf{\texttt{nm} Tool:} Running \texttt{arm-none-eabi-nm -n} lists all symbols sorted by address[cite: 10]. The letter before each name indicates its kind: \texttt{T/t} for text/code, \texttt{R} for read-only data, \texttt{D} for initialized data, \texttt{B} for BSS, and \texttt{A} for absolute symbols[cite: 10].
-    \item \textbf{\texttt{objdump} Tool:} Running \texttt{arm-none-eabi-objdump -h} prints one line per output section, showing its size, VMA, and LMA[cite: 10].
-\end{itemize}
+\begin{enumerate}
+    \item \textbf{The Map File (\texttt{build/output.map}):} Generated by passing the \texttt{-Map=} option to the linker. Its \textit{Memory Configuration} section repeats your \texttt{MEMORY} regions, and the \textit{Linker script and memory map} section lists every output section, every input section inside it (with the \texttt{.o} file it came from), and the load address for \texttt{.data}[cite: 108].
+    \item \textbf{\texttt{arm-none-eabi-nm -n}:} Lists all symbols sorted by address[cite: 108]. The letter before each name identifies its kind[cite: 108]:
+    \begin{itemize}
+        \item \textbf{T/t}: Code (text; lowercase means local to its file)
+        \item \textbf{R}: Read-only data
+        \item \textbf{D}: Initialized data
+        \item \textbf{B}: BSS (uninitialized data)
+        \item \textbf{A}: Absolute symbol (belongs to no specific section)
+    \end{itemize}
+    \item \textbf{\texttt{arm-none-eabi-objdump -h}:} Prints one line per output section, revealing its exact size, its \textbf{VMA} (run address), and its \textbf{LMA} (load address)[cite: 108].
+\end{enumerate}
 
 \subsubsection{Analyzing the Base Image}
-Run all three on the base skeleton:
-\begin{lstlisting}[language=bash]
-make
-arm-none-eabi-objdump -h build/scratch-os.axf
-arm-none-eabi-nm -n build/scratch-os.axf
-\end{lstlisting}
-
-In the \texttt{objdump -h} output, you find \texttt{.isr\_vector} at address \texttt{0x0} with size 8 bytes, and \texttt{.text} starting right after it at \texttt{0x8}. There is no \texttt{.rodata} line because it was folded into \texttt{.text}[cite: 10, 11]. 
-
-The \texttt{.data} line is the most interesting: its VMA is \texttt{0x20000000} (start of RAM), but its LMA is a small flash address (\texttt{0x60} in the base image), right after the code[cite: 10, 11]. In the \texttt{nm} output, \texttt{\_sidata} has exactly that value, \texttt{0x60}. You also find \texttt{\_sdata} at \texttt{0x20000000}, \texttt{\_edata} 32 bytes later (the size of the string literal), \texttt{\_sbss} and \texttt{\_ebss} equal (no zero-initialized variables in the base), and \texttt{\_estack} at \texttt{0x20400000}.
-
-\subsection{Which Section Does a Declaration Go To?}
-The compiler decides the \textit{input} section of each thing you declare, and the linker script then decides where that section goes. For declarations at file scope (outside any function), the rules are:
-
-\begin{table}[h]
-    \centering
-    \begin{tabular}{|l|l|l|}
-        \hline
-        \textbf{Global declaration (outside any function)} & \textbf{Section} & \textbf{Region} \\ \hline
-        a function body & \texttt{.text} & FLASH \\ \hline
-        \texttt{const int k = 3;} & \texttt{.rodata} & FLASH \\ \hline
-        \texttt{"a string literal"} & \texttt{.rodata} & FLASH \\ \hline
-        \texttt{int x = 5;} & \texttt{.data} & RAM, initial value in FLASH \\ \hline
-        \texttt{int y;} or \texttt{int z = 0;} & \texttt{.bss} & RAM, zeroed at boot \\ \hline
-    \end{tabular}
-\end{table}
-
-Note the last row: a variable explicitly initialized to zero also goes to \texttt{.bss}. Because "start at zero" is exactly what \texttt{.bss} guarantees, there is no reason to store the zero in Flash[cite: 11].
+If you run these tools on the base skeleton, the output perfectly validates our linker script[cite: 108]:
+\begin{itemize}
+    \item In the \texttt{objdump -h} output, \texttt{.isr\_vector} sits at address \texttt{0x0} with a size of 8 bytes (two words), and \texttt{.text} starts right after it at \texttt{0x8}[cite: 108]. 
+    \item There is no \texttt{.rodata} line in \texttt{objdump} because it was folded into \texttt{.text}[cite: 108]. You can confirm this in the map file, where \texttt{.rodata} is nested inside \texttt{.text} with the string literal from \texttt{main.o}[cite: 108].
+    \item The \texttt{.data} line shows a VMA of \texttt{0x20000000} (start of RAM), but an LMA of \texttt{0x60} (a small flash address right after the code)[cite: 108].
+    \item In the \texttt{nm} output, \texttt{\_sidata} exactly matches that \texttt{0x60} LMA[cite: 108]. Furthermore, \texttt{\_sdata} is at \texttt{0x20000000}, \texttt{\_edata} is 32 bytes later, \texttt{\_sbss} and \texttt{\_ebss} are perfectly equal (since the base has no uninitialized variables), and \texttt{\_estack} is at \texttt{0x20400000}[cite: 108].
+\end{itemize}
 
 \subsubsection{Pointers, Local, and Static Variables}
-Pointers deserve a moment of care, because a pointer is itself a variable[cite: 11]. In \texttt{const char *greeting = "hi";}, the characters \texttt{"hi"} form a string literal and go to \texttt{.rodata}[cite: 11]. However, \texttt{greeting}, the variable holding their address, is an initialized writable variable and goes to \texttt{.data}[cite: 11].
+Pointers deserve a moment of care, because a pointer is itself a variable[cite: 109]. In the declaration \texttt{const char *p = "hi";}, the characters \texttt{"hi"} are a string literal and go to \texttt{.rodata}; however, \texttt{p}, the variable holding their address, is an initialized writable variable and goes to \texttt{.data}[cite: 109].
 
-The section rules discussed above apply only to declarations made \textbf{outside any function}. A local variable inside a function has no section at all: it lives dynamically on the stack while the function runs, and it is gone as soon as the function returns[cite: 11].
+This table of section rules only applies to declarations made \textbf{outside any function}[cite: 109]. A local variable inside a function has no section at all: it lives on the stack while the function runs, and it is gone as soon as the function returns[cite: 109].
 
-By contrast, a \texttt{static} local variable (e.g., \texttt{static int s = 3;} inside \texttt{main}) behaves like a global variable. It keeps one fixed address for the whole run of the program, exactly like a global---it is only its \textit{name} that stays private to the function. In the \texttt{nm} output, the compiler appends a suffix (like \texttt{s.0}) to distinguish it from other statics with the same name.
+\subsubsection{Try It: Testing Global Declarations}
+You can test these placement rules by adding the following \textbf{global} variables to \texttt{src/main.c}, right after the line that defines \texttt{data\_message} (before \texttt{main}), so outside any function[cite: 109]:
 
-\subsubsection{Try It: Analyzing the Output and Little-Endianness}
-You can test the section rules by adding these global variables to \texttt{src/main.c}, right after \texttt{data\_message} (before \texttt{main}):
 \begin{lstlisting}[language=c]
 const int limit = 100;
 int counter = 5;
@@ -285,134 +252,180 @@ const char *greeting = "hi";
 char buffer[64];
 \end{lstlisting}
 
-Running \texttt{arm-none-eabi-nm -n build/scratch-os.axf} reveals their placement[cite: 11]. \texttt{counter} and \texttt{greeting} are marked \texttt{D} (initialized data), while \texttt{total}, \texttt{zero}, and \texttt{buffer} are marked \texttt{B} (bss)[cite: 11]. 
-
-Interestingly, in the intermediate object file (\texttt{main.o}), \texttt{limit} is marked \texttt{R} (read-only data), but in the final ELF image, it is marked \texttt{T} (text)[cite: 11, 12]. This happens because the linker script folds \texttt{.rodata} inside the \texttt{.text} output section, and \texttt{nm} classifies a symbol by its final output section[cite: 12]. 
-
-To find the string literal \texttt{"hi"}, which lacks a symbol name, dump the raw contents of the \texttt{.text} output section[cite: 12]:
+Write down your prediction for each one, then check[cite: 109]:
 \begin{lstlisting}[language=bash]
-arm-none-eabi-objdump -s -j .text build/scratch-os.axf
+make
+arm-none-eabi-nm build/src/main.o
+arm-none-eabi-nm -n build/scratch-os.axf
 \end{lstlisting}
-At address \texttt{0x44} you find \texttt{64 00 00 00} (the value 100 for \texttt{limit}), and at \texttt{0x48} you find \texttt{68 69 00} (the characters 'h', 'i', and the null terminator)[cite: 12]. The string \texttt{"hi"} starts exactly at \texttt{0x48} in FLASH.
 
-\paragraph{Pointers in RAM and Little-Endianness}
-How does the program find the string? Through \texttt{greeting}, the pointer stored in RAM. Dump the \texttt{.data} section:
+You find \texttt{counter} and \texttt{greeting} marked \texttt{D} (initialized data), and \texttt{total}, \texttt{zero}, and \texttt{buffer} marked \texttt{B} (bss)[cite: 109]. The variable \texttt{limit} is the interesting one: in \texttt{main.o} it is marked \texttt{R} (read-only data), but in the final image it is marked \texttt{T}, as if it were code[cite: 109, 110]. The reason is the linker script: it puts \texttt{.rodata} \textit{inside} the \texttt{.text} output section, and in the final image \texttt{nm} classifies a symbol by the output section it ended up in[cite: 110]. 
+
+The string \texttt{"hi"} has no name, so \texttt{nm} does not show it, but the map file shows the \texttt{.rodata} input sections of \texttt{main.o} inside \texttt{.text}[cite: 110]. You can find its bytes directly by dumping the contents of the \texttt{.text} output section[cite: 110]:
 \begin{lstlisting}[language=bash]
-arm-none-eabi-objdump -s -j .data build/scratch-os.axf
+$ arm-none-eabi-objdump -s -j .text build/scratch-os.axf
+ ...
+ 0038 00bffde7 4c000000 00000020 64000000  ....L...... d...
+ 0048 68690000 6d61696e 3a206865 6c6c6f20  hi..main: hello
 \end{lstlisting}
-Following the \texttt{data\_message} string, you will find \texttt{counter} (represented as \texttt{05 00 00 00}) and \texttt{greeting} (represented as \texttt{48 00 00 00}). 
+Each line starts with the address of its first byte, shows 16 bytes, and repeats the same bytes as text on the right. At address \texttt{0x44} you find \texttt{64 00 00 00}: that is \texttt{limit}, whose value is 100 (\texttt{0x64})[cite: 110]. At \texttt{0x48} you find \texttt{68 69 00}, the characters \texttt{h} and \texttt{i} followed by the terminating zero: the string \texttt{"hi"} starts at address \texttt{0x48}, in FLASH[cite: 110].
 
-To read these numbers, you must know one crucial hardware fact: the Cortex-M3 is \textbf{little-endian}, meaning a 32-bit number is stored with its lowest byte first. Therefore, the bytes \texttt{48 00 00 00} represent the hexadecimal number \texttt{0x00000048}. This is exactly the FLASH address where \texttt{"hi"} starts. This demonstrates that a pointer is simply a variable whose value is a memory address.
+\subsubsection{Pointers in RAM and Little-Endianness}
+How does the program find it? Through \texttt{greeting}, which is a pointer stored in RAM. Dump \texttt{.data}[cite: 110]:
+\begin{lstlisting}[language=bash]
+$ arm-none-eabi-objdump -s -j .data build/scratch-os.axf
+ 20000000 6d61696e 3a207468 69732074 65787420  main: this text
+ 20000010 6c697665 7320696e 202e6461 74610a00  lives in .data..
+ 20000020 05000000 48000000                    ....H...
+\end{lstlisting}
+Because you added the variables right after \texttt{data\_message} in \texttt{src/main.c}, the first two lines, from \texttt{0x20000000} to \texttt{0x2000001F}, are \texttt{data\_message} (you can read its text on the right), and your variables follow: \texttt{counter} at \texttt{0x20000020} and \texttt{greeting} at \texttt{0x20000024}[cite: 110]. The compiler places variables in \texttt{.data} in the order you define them. 
+
+To read the numbers you need one more fact: the Cortex-M3 is \textbf{little-endian}, which means that a 32-bit number is stored with its lowest byte first[cite: 110]. 
+\begin{itemize}
+    \item The four bytes \texttt{05 00 00 00} are the number 5 (the value of \texttt{counter})[cite: 110].
+    \item The four bytes \texttt{48 00 00 00} are the number \texttt{0x00000048}[cite: 110]. That is the value of \texttt{greeting}, and it is exactly the FLASH address where \texttt{"hi"} starts[cite: 110]. 
+\end{itemize}
+This is all a pointer is: a variable whose value is an address[cite: 110]. 
+
+\subsubsection{Local vs. Static Local Variables}
+You can see the local-vs-global contrast directly. Inside \texttt{main}, add \texttt{int local = 7;} and \texttt{static int s = 3;}, then check \texttt{nm} again[cite: 109].
+\begin{itemize}
+    \item \texttt{local} never appears at all: it is not a global, it has no fixed address, and it only exists on the stack while \texttt{main} is running[cite: 109].
+    \item \texttt{s} does appear, as \texttt{d s.0}: lowercase \texttt{d} means it lives in \texttt{.data} but is visible only inside this file, and the compiler appends a \texttt{.0} (or \texttt{.N} suffix) to tell one function's static local apart from another's if they share a name[cite: 109]. Unlike \texttt{local}, a \texttt{static} local keeps one fixed address for the whole run of the program, exactly like a global — it is only its \textit{name} that stays private to the function[cite: 109].
+\end{itemize}
 
 \subsection{Advanced Memory Layout: Custom Sections and Orphans}
-You are not limited to the sections the compiler chooses. GCC lets you name the input section of a variable or a function yourself using compiler attributes[cite: 12]:
+You are not strictly limited to the default sections the compiler chooses[cite: 110]. GCC provides compiler attributes that allow you to explicitly name the input section of a variable or a function[cite: 110]:
+
 \begin{lstlisting}[language=c]
 int tagged __attribute__((section(".mysection"))) = 42;
 \end{lstlisting}
 
-Where that section ends up is up to the linker script, \textbf{if the script names it}[cite: 12]. A section that no rule in the \texttt{SECTIONS} block matches is called an \textbf{orphan}[cite: 12]. The linker does not reject it; it places it by guessing based on its flags (e.g., writable vs. executable) and putting it next to sections that look similar. 
+Where that custom section physically ends up is entirely up to the linker script, \textbf{if the script names it}[cite: 110]. A section that does not match any rule in the \texttt{SECTIONS} block is called an \textbf{orphan}[cite: 110]. The linker does not reject an orphan section; instead, it places it by guessing based on its flags (e.g., whether it is writable or executable) and places it adjacent to sections with similar properties[cite: 110]. 
 
-While the guess usually links fine, it places the data outside your control and outside any symbol range you defined. If you add the \texttt{tagged} variable to the base project and search for it:
+While this guess usually allows the program to link successfully, the orphan section is placed completely outside your control and, critically, outside any predefined symbol ranges[cite: 110].
+
+If you add the \texttt{tagged} variable to the base project and examine the output using \texttt{arm-none-eabi-nm -n}, you will see the linker symbols placed next to your variable[cite: 110]:
+
 \begin{lstlisting}[language=bash]
-arm-none-eabi-nm -n build/scratch-os.axf | grep -E '_sdata|_edata|tagged'
-\end{lstlisting}
-The output prints the linker symbols next to your variable:
-\begin{lstlisting}
 20000000 D _sdata
 20000020 D _edata
 20000020 D tagged
 \end{lstlisting}
-Notice that \texttt{tagged} is placed at \texttt{0x20000020}, exactly where \texttt{\_edata} ends. Because it is an orphan, it falls outside the \texttt{\_sdata} to \texttt{\_edata} loop bounds, meaning the boot code will never copy its initial value into RAM!
 
 A new output section \texttt{.mysection} appears. The linker saw a writable, initialized section, so it placed it in RAM \textbf{right after \texttt{.data}}, and gave it its own load address in FLASH. 
 
-Now compare its address with \texttt{\_edata}: \texttt{tagged} sits exactly at \texttt{\_edata}, that is, \textit{after} the end of the range \texttt{\_sdata}...\texttt{\_edata}. A boot loop that copies only \texttt{\_sdata}...\texttt{\_edata} will never copy it, so \texttt{tagged} will not hold \texttt{42} when \texttt{main()} runs. The program links without a single warning and is still wrong. That is the danger of orphans. 
+Now compare its address with \texttt{\_edata}: \texttt{tagged} sits exactly at \texttt{\_edata}, that is, \textit{after} the end of the range \texttt{\_sdata}...\texttt{\_edata}. A boot loop that copies only \texttt{\_sdata}...\texttt{\_edata} will never copy it, so \texttt{tagged} will not hold 42 when \texttt{main()} runs. The program links without a single warning and is still wrong. That is the fundamental danger of orphans.
 
-If you declare \texttt{const int} in a section called \texttt{.myconst} instead, the linker sees a read-only section and places it in FLASH, between \texttt{.isr\_vector} and \texttt{.text}.
-
-\subsubsection{Forcing Variables into Specific Sections}
-You have the ability to force the compiler to place a variable into a specifically named section directly from your C code. This is done using compiler attributes. For instance:
-
-\begin{verbatim}
-int tagged __attribute__((section(".mySeg"))) = 42;
-\end{verbatim}
-
-This command defines an integer variable named \texttt{tagged} and forces the linker to store it in a custom section named \texttt{.mySeg}. In the linker script, you can then define exactly where this \texttt{.mySeg} section should be placed physically, giving you absolute control over the memory layout. Even if you do not explicitly define \texttt{.mySeg} in the linker script, the linker will still attempt to manage it as an "orphan" section, though it's best practice to define it explicitly.
+If you declare a \texttt{const int} in a section called \texttt{.myconst} instead, the linker sees a read-only section and places it safely in FLASH, between \texttt{.isr\_vector} and \texttt{.text}. 
 
 \subsection{Overflowing a Region}
-The \texttt{LENGTH} values in the \texttt{MEMORY} block are not decoration: the linker enforces them. First, measure how much flash the base image needs:
+The \texttt{LENGTH} values in the \texttt{MEMORY} block are not decoration: the linker actively enforces them. First, measure how much flash the base image needs:
+
 \begin{lstlisting}[language=bash]
 arm-none-eabi-size build/scratch-os.axf
 \end{lstlisting}
 
-FLASH has to hold \texttt{text + data}: the code and constants, plus the stored copy of \texttt{.data}'s initial values. For the base skeleton, this is $96 + 32 = 128$ bytes. 
+The FLASH region has to hold \texttt{text + data}: the code and constants, plus the stored copy of \texttt{.data}'s initial values. For the base skeleton, this is $96 + 32 = 128$ bytes. 
 
-If you edit \texttt{scripts/mps2\_m3.ld} and set FLASH \texttt{LENGTH = 100}, you can test the overflow protection. Rebuild with \texttt{make -B} (because \texttt{make} does not track linker script changes automatically, \texttt{-B} forces everything to be rebuilt)[cite: 12]. The link fails with:
-\begin{lstlisting}
+If you edit \texttt{scripts/mps2\_m3.ld} and set FLASH \texttt{LENGTH = 100}, you can test this enforcement. Rebuild with \texttt{make -B} (the \texttt{Makefile} does not automatically list the linker script as a prerequisite, so \texttt{-B} forces everything to be rebuilt). The link will intentionally fail with:
+
+\begin{lstlisting}[language=bash]
 region 'FLASH' overflowed by 28 bytes
 \end{lstlisting}
-and $128 - 100$ is exactly 28[cite: 12]. Setting \texttt{LENGTH = 128} allows the link to succeed because the image fits exactly.
 
-If you restore FLASH and set RAM \texttt{LENGTH = 8K} instead, \texttt{\_estack} moves down to \texttt{0x20002000}. The 4 KB stack reservation starts 4 KB below it, and the 4 KB heap no longer fits between \texttt{.bss} and the stack[cite: 12]. The failure comes from the script's own \texttt{ASSERT} line, which turns a memory corruption that would normally appear at run time into a clear error at build time[cite: 12].
+$128 - 100$ is exactly 28. If you set \texttt{LENGTH = 128}, the link succeeds because the image fits exactly.
 
-\subsection{Reset: The Hardware Contract}
-Once the memory layout is finalized and the ELF file is loaded into memory, the machine can be powered on[cite: 88]. Operating systems on standard desktop computers rely on a BIOS, a loader, and a C runtime to initialize the environment. However, on a bare-metal ARM Cortex-M microprocessor, absolutely none of these services exist[cite: 88].
+If you then restore FLASH and set RAM \texttt{LENGTH = 8K} instead, \texttt{\_estack} moves down to \texttt{0x20002000}. The 4 KB stack reservation starts 4 KB below it, meaning the 4 KB heap no longer fits between \texttt{.bss} and the stack. The build failure in this scenario comes directly from the script's own \texttt{ASSERT} line, printing its custom message about the heap colliding with the stack.
 
-When the Cortex-M processor comes out of reset, the hardware executes a strictly predefined and immutable sequence[cite: 88]. Before any user code runs, the hardware performs exactly two memory reads at the very beginning of the address space (\texttt{0x00000000})[cite: 88]:
+\section{Reset: The Hardware Contract}
+Once the memory layout is finalized and loaded into memory, the machine can be powered on. The next question is how the CPU starts using it. 
+
+When the Cortex-M3 comes out of reset, \textbf{before any of your code runs}, the hardware executes a strictly predefined sequence. It does exactly two things:
 \begin{enumerate}
-    \item \textbf{Word 0:} It reads the first 4 bytes at address \texttt{0x0} and copies this value directly into the Stack Pointer (SP) register[cite: 88].
-    \item \textbf{Word 1:} It reads the next 4 bytes at address \texttt{0x4} and copies this value into the Program Counter (PC) register, jumping to that address to begin execution[cite: 88].
+    \item It reads the 32-bit word at address \texttt{0x0} and puts it directly into \textbf{SP}, the stack pointer.
+    \item It reads the word at address \texttt{0x4} and puts it directly into \textbf{PC}, the program counter: execution starts at that exact address.
 \end{enumerate}
 
-This behavior is a hardwired contract[cite: 88]. The CPU blindly trusts that the developer has placed the correct initial stack address and the correct starting address of the application code into these first eight bytes of memory[cite: 88]. Everything else—copying the \texttt{.data} section to RAM, zeroing out the \texttt{.bss} section, and setting up the C environment—must be explicitly handled by the developer's boot code starting at the address provided in Word 1[cite: 88].
+There is no BIOS, no loader, no C runtime. Just those two words. Everything else (copying \texttt{.data}, zeroing \texttt{.bss}, configuring the CPU, calling \texttt{main()}) is \textbf{your code's job}, and your code starts at the address stored in that second word.
 
-\subsection{The Vector Table: Controlling the Boot Process}
-Those two initial words (SP and PC) are the beginning of the \textbf{vector table}: a table of addresses at a fixed place in memory (address \texttt{0x0} at reset)[cite: 13]. 
+\subsection{The Vector Table}
+Those two initial words are the beginning of the \textbf{vector table}: a table of addresses at a fixed place in memory (address \texttt{0x0} at reset). 
 
-The table exists because of \textbf{exceptions}[cite: 13]. An exception is an event that makes the CPU stop what it is doing and run a specific piece of code called its \textbf{handler}[cite: 13]. Reset is one exception; a hardware fault is another[cite: 13]. Each exception has a number, and slot $N$ of the vector table holds the address of the handler for exception $N$[cite: 13]. Slot 0 is special: it is not the address of any code, but the initial value of the SP[cite: 13].
+The table exists because of \textbf{exceptions}. An exception is an event that makes the CPU stop what it is doing and run a specific piece of code, called its \textbf{handler}. Reset is one exception; a fault (such as accessing an unmapped address) is another. Each exception has a specific number, and slot $N$ of the vector table holds the address of the handler for exception $N$. When exception $N$ happens, the CPU hardware reads slot $N$ and automatically jumps there. Slot 0 is special: it is not the address of any code, it is strictly the initial value of SP.
 
-\subsubsection{Implementing the Vector Table in Assembly}
-In the base skeleton, the table is written in \texttt{boot/startup.s} inside a section called \texttt{.isr\_vector}, and initially has only two slots[cite: 13]:
+In the base skeleton, the table is written in \texttt{boot/startup.s}, inside a section explicitly called \texttt{.isr\_vector}, and currently has only two slots:
+
 \begin{lstlisting}[language=make]
 isr_vector:
     .word _estack          /* 0: initial SP  (C: &_estack)      */
     .word Reset_Handler    /* 1: reset       (C: Reset_Handler) */
 \end{lstlisting}
 
-\texttt{.word X} simply allocates a 32-bit word and stores the value \texttt{X} inside it[cite: 14, 19]. The label \texttt{isr\_vector} is the address of the first word. Because the linker script places the \texttt{.isr\_vector} section first in FLASH, the table lands exactly at address \texttt{0x0}[cite: 13].
+\texttt{.word X} simply stores the 32-bit value \texttt{X}, like one element of an array initializer. The label \texttt{isr\_vector} is the address of the first word. This connects directly to the linker script: \texttt{isr\_vector} in \texttt{boot/startup.s} lives in section \texttt{.isr\_vector}, and the script places \texttt{.isr\_vector} first in FLASH, so the table lands exactly at address 0, exactly where the CPU expects to read it.
 
 \subsubsection{The Thumb Bit Constraint}
-When inspecting the boot sequence in a debugger, the value stored in word 1 is not exactly the raw address of \texttt{Reset\_Handler}, but that address with its lowest bit set to 1. Because instructions always sit at even memory addresses (2-byte or 4-byte aligned), bit 0 of a code address is otherwise unused. ARM uses bit 0 to indicate "this is Thumb code". The Cortex-M executes only the Thumb instruction set, so it strictly requires this bit to be 1[cite: 17, 19].
+One critical detail you will observe in the debugger: the value stored in word 1 is not exactly the raw address of \texttt{Reset\_Handler}, but that address with its lowest bit set to 1. 
 
-\subsubsection{\textit{KEEP} and Garbage Collection}
-The linker has an optional feature, enabled with \texttt{-Wl,--gc-sections}, called \textbf{garbage collection of sections}. Starting from the \texttt{ENTRY} symbol, the linker follows every reference from one section to another, and \textbf{drops every input section that nothing references}[cite: 14]. This is useful for trimming unused code, but dangerous for data that only the hardware reads: no code references the vector table, so the garbage collector would consider it useless and throw it away[cite: 14].
+Instructions always sit at even addresses (2-byte or 4-byte aligned), so bit 0 of a code address is otherwise unused. ARM uses bit 0 as a flag to mean "this is Thumb code". Because the Cortex-M3 executes \textit{only} the Thumb instruction set, the hardware strictly requires this bit to be 1.
 
-\texttt{KEEP(...)} in the linker script marks input sections as \textbf{always kept}, whatever the garbage collector thinks[cite: 14]. The rule \texttt{KEEP(*(.isr\_vector))} exists for exactly this reason. 
+Notice also that nothing in the program ever \textit{calls} or \textit{reads} \texttt{isr\_vector} programmatically. Only the hardware reads it. That fact matters for how the linker optimizes code.
 
-If you remove \texttt{KEEP} and enable garbage collection, \texttt{objdump -h} will show \texttt{.isr\_vector} with size \texttt{0}. Running the program will fail with a fatal \texttt{Lockup} error. The lockup makes perfect sense: at reset, the CPU still reads words 0 and 1, but those words are now the first instructions of \texttt{Reset\_Handler}, not a stack address and a code address. The CPU jumps into nonsense and stops.
+\subsubsection{\texttt{KEEP} and Garbage Collection}
+The linker possesses an optional optimization feature, enabled by passing the \texttt{-Wl,--gc-sections} flag, known as \textbf{garbage collection of sections}. Starting from the \texttt{ENTRY} symbol, the linker meticulously follows every reference from one section to another and \textbf{drops every input section that nothing references}. 
 
-\subsection{Back to the Base: Why Only One Line Prints}
-You now have everything you need to explain the base skeleton's behavior from the beginning of the chapter. \texttt{main()} prints two strings:
+While this is exceptionally useful for trimming unused code from a final program, it is dangerous for data that only the hardware reads. Because no software code actively references the vector table, the garbage collector would consider it useless and throw it away.
+
+The \texttt{KEEP(...)} directive in the linker script marks input sections as \textbf{always kept}, overriding the garbage collector. The rule \texttt{KEEP(*(.isr\_vector))} in \texttt{scripts/mps2\_m3.ld} exists for exactly this reason. (Currently, the course \texttt{Makefile} does not enable garbage collection, making \texttt{KEEP} an insurance policy for the future).
+
+\paragraph{Try It: Analyzing the Lockup Error}
+You can see exactly what this insurance protects by deliberately breaking it:
 \begin{enumerate}
-    \item The first is a string literal: it lives in \texttt{.rodata}, inside \texttt{.text}, in FLASH, and the CPU reads it directly from there. It prints correctly.
-    \item The second is \texttt{data\_message}, an initialized global array. Its VMA is at \texttt{0x20000000} in RAM, but its initial bytes are stored at a flash LMA. 
+    \item In \texttt{scripts/mps2\_m3.ld}, replace \texttt{KEEP(*(.isr\_vector))} with a plain \texttt{*(.isr\_vector)} and rebuild with \texttt{make -B}. \texttt{objdump -h} still shows \texttt{.isr\_vector} at 8 bytes because garbage collection is off.
+    \item Add the line \texttt{LDFLAGS += -Wl,--gc-sections} to the \texttt{Makefile} and rebuild with \texttt{make -B} again.
 \end{enumerate}
 
-\texttt{main()} reads the string at its VMA, in RAM. But in the base skeleton, \texttt{Reset\_Handler} contains only \texttt{bl main} and a loop: \textbf{no code moves the bytes from the LMA to the VMA}. The RAM at \texttt{0x20000000} still holds whatever it held at power-on, which in QEMU is all zeros. A string whose first byte is zero is the empty string, so the second call prints nothing! Writing that missing copy is the goal of the next unit.
+Now, the compilation output drastically changes:
+\begin{itemize}
+    \item \texttt{objdump -h} shows \texttt{.isr\_vector} with a size of \texttt{0}, and \texttt{.text} now starts at \texttt{0x0}.
+    \item The map file lists \texttt{.isr\_vector} under \textit{Discarded input sections}.
+    \item \texttt{nm -n} shows \texttt{Reset\_Handler} shifted to address \texttt{0x0}.
+    \item Running \texttt{make run} fails immediately with \texttt{qemu: fatal: Lockup ...}
+\end{itemize}
+
+This lockup makes perfect physical sense. At reset, the CPU strictly reads words 0 and 1 to use as SP and PC. However, because the table was discarded, those words are now the first machine instructions of \texttt{Reset\_Handler}. The CPU attempts to use instructions as memory addresses, jumps into nonsense, and fatally locks up. Putting \texttt{KEEP} back restores the table and fixes the boot process.
+
+\subsection{Back to the Base: Why Only One Line Prints}
+With the memory layout and hardware contract fully mapped, we can finally explain the behavior of the base skeleton observed at the beginning of the chapter.
+
+If you run the base code:
+\begin{lstlisting}[language=bash]
+make -B
+make run
+\end{lstlisting}
+
+The \texttt{main()} function attempts to print two strings:
+\begin{enumerate}
+    \item The first is a standard string literal: it lives in \texttt{.rodata}, folded inside \texttt{.text} in FLASH. The CPU reads it directly from FLASH, and it prints correctly.
+    \item The second is \texttt{data\_message}, an initialized global array. As confirmed by \texttt{objdump -h}, the \texttt{.data} section has its VMA at \texttt{0x20000000} in RAM, but its initial bytes are stored at a FLASH LMA.
+\end{enumerate}
+
+When \texttt{main()} executes, it attempts to read the \texttt{data\_message} string at its VMA in RAM. However, in the base skeleton, \texttt{Reset\_Handler} in \texttt{base/boot/startup.s} contains only a \texttt{bl main} instruction and an infinite loop. \textbf{No code moves the bytes from the LMA to the VMA.} 
+
+Consequently, the RAM at \texttt{0x20000000} still holds whatever it held at power-on, which in the QEMU emulator happens to be all zeros. A string whose first byte is zero is read by C as the empty string. Thus, the second call prints absolutely nothing. 
+
+Writing the assembly loop to perform this missing memory copy is where Unit 2 officially begins.
 
 \section{Taking Control of the CPU}
-\subsection{Startup Code: Assembly vs. C}
-The previous sections established how to correctly place code and data into memory. The next critical phase is understanding precisely what code must be placed there to initialize the system and take full control of the CPU. The low-level startup code is essential for bridging the gap between hardware power-on and the execution of the main C program.
-
-While this startup sequence can technically be written in C, it is highly instructive—and often more straightforward—to write it directly in Assembly language[cite: 93]. Writing this sequence in C requires complex abstractions and pointer arithmetic to manipulate low-level hardware states[cite: 93]. Assembly, conversely, provides a transparent 1:1 mapping between the instruction written and the physical action taken by the CPU, making the core initialization steps much clearer to understand[cite: 93].
+In this unit, you rebuild \texttt{Reset\_Handler} in \texttt{boot/startup.s} yourself, in assembly, one step at a time. To do that, you need two things you have not used before: a debugger to \textit{see} what the CPU does, and enough ARM assembly to read and write the boot code.
 
 \subsection{What is a Debugger?}
-In this unit, you rebuild \texttt{Reset\_Handler} in assembly one step at a time. To do that, you need a debugger to \textit{see} what the CPU does[cite: 14]. A \textbf{debugger} is a program that controls another program while it runs. It can \textbf{stop} the program at any instruction (a \textbf{breakpoint}), \textbf{step} forward one machine instruction at a time, \textbf{inspect} CPU registers and memory, and \textbf{continue} execution[cite: 14].
+A \textbf{debugger} is a program that controls another program while it runs. It can \textbf{stop} the program at any instruction you choose (a \textbf{breakpoint}) or right at the start, before anything has run. It can \textbf{step} it forward one machine instruction, or one C line, at a time. While the program is stopped, it can \textbf{inspect} the CPU registers and any memory address, and even change them. And it can \textbf{continue} the program until the next breakpoint.
 
-On a desktop, a crashing program prints an error message. On a microcontroller, there is often no console at all, and a crash simply looks like "nothing happens." A debugger is frequently the \textit{only} way to see what the CPU is really doing[cite: 14]. The standard tool is \textbf{gdb}, the GNU debugger. The ARM version is \texttt{arm-none-eabi-gdb}[cite: 15].
+On a desktop, a crashing program at least prints an error message. On a microcontroller, there is often no console at all, and a crash simply looks like "nothing happens". A debugger is frequently the \textit{only} way to see what the CPU is really doing. The standard tool is \textbf{gdb}, the GNU debugger, part of the same toolchain family as gcc. The ARM version you use is \texttt{arm-none-eabi-gdb}; on Linux, the gdb that understands ARM is usually called \texttt{gdb-multiarch} instead.
 
 \subsection{A Remote Debugger: Two Programs, Two Terminals}
-In this setup, the program being debugged does not run on the same "machine" as GDB[cite: 14]. It runs inside QEMU, which emulates the Cortex-M3 board. GDB talks to QEMU over a network connection (a TCP socket). This requires two separate terminals[cite: 14, 15]:
+In this setup, the program being debugged does not run on the same "machine" as gdb. It runs inside QEMU, which emulates the Cortex-M3 board on your laptop. gdb talks to QEMU over a network connection (a TCP socket on your own machine). So you use two terminals:
 
 \begin{verbatim}
  Terminal 1: make debug               Terminal 2: arm-none-eabi-gdb build/scratch-os.axf
@@ -424,69 +437,54 @@ In this setup, the program being debugged does not run on the same "machine" as 
    program output shows here            you type commands here
 \end{verbatim}
 
-\begin{itemize}
-    \item \textbf{Terminal 1 (The Target):} You start QEMU with \texttt{make debug}[cite: 15]. The \texttt{debug} target in the \texttt{Makefile} runs QEMU with two crucial options: \texttt{-S}, which freezes the emulated CPU before its very first instruction, and \texttt{-gdb tcp::1234}, which starts a GDB server waiting for a connection on port 1234[cite: 15]. Anything the program prints still appears in this terminal.
-    \item \textbf{Terminal 2 (The Host):} You start GDB and pass the \texttt{.axf} ELF file so the debugger has access to all the symbol names[cite: 15]. You type your commands here.
-\end{itemize}
-
-\subsubsection{GDB: The GNU Debugger}
-The standard tool for this task is \textbf{GDB} (the GNU Debugger)[cite: 94]. While it lacks a graphical user interface and operates entirely via the command line, it is exceptionally powerful and specifically designed for this client-server architecture[cite: 94]. To use it with our ARM target, we run the cross-compiled version (\texttt{arm-none-eabi-gdb}) and load our ELF file (\texttt{scratch-os.axf}) so the debugger has access to all the symbol names (like \texttt{main} or \texttt{Reset\_Handler})[cite: 95]. 
-
-We then connect to the running emulator using the command \texttt{target remote :1234}. From there, GDB allows us to inspect CPU registers (\texttt{info registers}), examine raw memory addresses in hexadecimal (\texttt{x/wx}), step through the program one single machine instruction at a time (\texttt{stepi}), and set breakpoints to pause execution at specific labels (\texttt{break}).
-
-\subsubsection{Setting Up the Debugging Session}
-To use the debugger in practice, we must coordinate both ends of the connection:
-
-\textbf{1. Preparing the Target (QEMU):}
-Instead of running the emulator normally, we must instruct it to start in debug mode. In the \texttt{Makefile}, there is a specific target named \texttt{debug} which launches QEMU with additional flags:
-\begin{verbatim}
--s -gdb tcp::1234
-\end{verbatim}
-The \texttt{-s} flag is critical: it commands the emulator to freeze the CPU immediately at reset, before the very first instruction is executed[cite: 95]. The \texttt{-gdb tcp::1234} flag opens a GDB server listening on port 1234[cite: 95]. When we type \texttt{make debug}, the terminal will show no program output; the emulator appears stalled because the CPU is powered on but intentionally waiting for a debugger to connect.
-
-\textbf{2. Connecting the Host (GDB):}
-In a second terminal, we launch the debugger. It is vital to pass the ELF file as an argument when starting GDB (e.g., \texttt{arm-none-eabi-gdb build/scratch-os.axf})[cite: 95]. GDB does not execute this file; it reads the metadata inside it[cite: 95]. Because we compiled our code with flags that preserve debugging symbols, GDB can map raw hexadecimal memory addresses back to human-readable C variables and function names (like \texttt{main})[cite: 95]. Without the ELF file, the developer would only see raw addresses and would have to manually track the memory locations of every variable.
-
-\textit{Note on Security:} Keeping debugging symbols is essential during development. However, before releasing a final commercial product, these symbols are always stripped from the ELF file. Leaving them in provides malicious actors with a detailed blueprint of how the code operates, making it trivial to exploit.
+In terminal 1, you start QEMU with \texttt{make debug}. The \texttt{debug} target in the \texttt{Makefile} runs the same QEMU command as \texttt{make run}, plus two options: \texttt{-S}, which freezes the emulated CPU before its very first instruction, and \texttt{-gdb tcp::1234}, which starts a gdb server that waits for a connection on TCP port 1234. Anything the program prints still appears in this terminal.
 
 \subsubsection{Reconstructing the Debug Target}
-The \texttt{debug} target is essentially a shorthand, and you can reconstruct it for any image. Take the QEMU command from the \texttt{run} target of the \texttt{Makefile}, and append \texttt{-S -gdb tcp::1234}:
+The \texttt{debug} target is therefore nothing more than a shorthand, and you can reconstruct it for any image. Take the QEMU command from the \texttt{run} target of the \texttt{Makefile} you are working with, and append \texttt{-S -gdb tcp::1234}:
+
 \begin{lstlisting}[language=bash]
 qemu-system-arm -machine mps2-an385 -monitor null -semihosting \
-    --semihosting-config enable=on,target=native \
+    -semihosting-config enable=on,target=native \
     -kernel build/scratch-os.axf -serial stdio -nographic \
     -S -gdb tcp::1234
 \end{lstlisting}
-This is important for future work: later checkpoints' Makefiles may have a \texttt{run} target but no \texttt{debug} target, and this command is how you will debug them.
+
+This matters after this week: the later checkpoints' Makefiles have a \texttt{run} target but no \texttt{debug} target, and this command, run from the checkpoint's folder after \texttt{make}, is how you debug them.
+
+In terminal 2, you start gdb and give it the ELF file, \texttt{arm-none-eabi-gdb build/scratch-os.axf}. gdb reads the ELF only for its \textbf{symbols} and debug information, so that it knows the addresses of \texttt{main}, \texttt{Reset\_Handler}, \texttt{data\_message}, and so on. It does not load the code: QEMU already holds the program. You then connect with \texttt{target remote :1234}.
 
 \subsubsection{The GDB Commands You Need}
-This small set of commands is enough for everything in this phase:
-\begin{table}[h]
+This small set of commands is enough for everything this week:
+
+\begin{table}[h!]
 \centering
 \begin{tabular}{|l|l|}
 \hline
 \textbf{Command} & \textbf{What it does} \\ \hline
 \texttt{target remote :1234} & connect to the gdb server (QEMU) on this machine \\ \hline
 \texttt{info registers sp pc} & show some registers (\texttt{info registers} alone: all of them) \\ \hline
-\texttt{x/2wx 0} & e\textbf{x}amine memory: 2 \textbf{w}ords in he\textbf{x}, at address 0 \\ \hline
+\texttt{x/2wx 0} & e\textbf{x}amine memory: 2 \textbf{w}ords (32 bits each) in he\textbf{x}, at address 0 \\ \hline
 \texttt{x/s \&data\_message} & examine memory as a C \textbf{s}tring \\ \hline
 \texttt{p/x \$r1} & \textbf{p}rint one register (or a C expression) in hex \\ \hline
 \texttt{display/i \$pc} & after every step, show the next \textbf{i}nstruction \\ \hline
-\texttt{stepi} (\texttt{si}) & execute exactly one machine instruction (Enter repeats it) \\ \hline
+\texttt{stepi} (\texttt{si}) & execute exactly one machine instruction (pressing Enter repeats it) \\ \hline
 \texttt{break main} (\texttt{b}) & stop when execution reaches \texttt{main} (or any label) \\ \hline
 \texttt{continue} (\texttt{c}) & run until the next breakpoint; \texttt{Ctrl-C} interrupts it \\ \hline
 \texttt{quit} (\texttt{q}) & leave gdb (QEMU keeps running: stop it with \texttt{Ctrl-C}) \\ \hline
 \end{tabular}
 \end{table}
 
-\subsubsection{Attaching at Reset}
-The first thing to do with the debugger is to catch the CPU \textit{before} its first instruction, and check the reset contract. In the two terminals:
+\subsection{Attaching at Reset}
+The first thing to do with the debugger is to catch the CPU \textit{before} its first instruction, and check the reset contract from Unit 1. In the base folder:
+
 \begin{lstlisting}[language=bash]
 make debug                                  # terminal 1: QEMU waits
 arm-none-eabi-gdb build/scratch-os.axf      # terminal 2
 \end{lstlisting}
-And inside GDB:
-\begin{lstlisting}
+
+and in gdb:
+
+\begin{lstlisting}[language=bash]
 (gdb) target remote :1234
 (gdb) info registers sp pc
 (gdb) x/2wx 0
@@ -494,14 +492,14 @@ And inside GDB:
 
 You see \texttt{sp} equal to \texttt{0x20400000}, \texttt{pc} equal to \texttt{0x8 <Reset\_Handler>}, and at address 0 the two words \texttt{0x20400000 0x00000009}. \textbf{No instruction has run yet}, yet SP and PC already have values: the CPU itself copied vector word 0 into SP and vector word 1 into PC. 
 
-Compare the two: word 1 is \texttt{0x9}, but PC is \texttt{0x8}. This is the \textbf{Thumb bit}. The CPU uses bit 0 to check that the target is Thumb code and then clears it; the instruction really starts at \texttt{0x8}. Why \texttt{0x8}? Because the base's vector table has only two words (8 bytes), and the code is placed right after it in FLASH.
+Compare the two: word 1 is \texttt{0x9}, PC is \texttt{0x8}. This is the Thumb bit from Unit 1. The CPU uses bit 0 to check that the target is Thumb code and then clears it; the instruction really starts at \texttt{0x8}. And why \texttt{0x8} in the first place? The base's vector table has only two words (8 bytes), and the code is placed right after it in FLASH.
 
 \subsection{Cortex-M3 Programmer's Model: The Registers}
-To follow the CPU instruction by instruction, you need to know what it holds. The \textbf{programmer's model} is the set of registers your code, and GDB, can see. All of them are 32 bits wide.
+To follow the CPU instruction by instruction, you need to know what it holds. The \textbf{programmer's model} is the set of registers your code, and gdb, can see. All of them are 32 bits wide.
 
-\begin{table}[h]
+\begin{table}[h!]
 \centering
-\begin{tabular}{|l|l|p{8cm}|}
+\begin{tabular}{|l|l|l|}
 \hline
 \textbf{Register} & \textbf{Name} & \textbf{Role} \\ \hline
 R0--R12 & general purpose & your values; a C function call passes its first arguments in R0--R3 \\ \hline
@@ -512,93 +510,97 @@ R15 & \textbf{PC} & program counter: address of the next instruction \\ \hline
 \end{tabular}
 \end{table}
 
-At this level, there are no variables: only these registers and memory. When your C code says \texttt{x = x + 1}, the compiler turns it into "load \texttt{x} from memory into a register, add 1 to the register, store the register back". The stack grows \textbf{downwards}: pushing a value first does \texttt{SP = SP - 4}, then writes the value at the new SP.
+At this level, there are no variables: only these registers and memory. When your C code says \texttt{x = x + 1}, the compiler turns it into "load \texttt{x} from memory into a register, add 1 to the register, store the register back". The stack, as you know, grows \textbf{downwards}: pushing a value first does \texttt{SP = SP - 4}, then writes the value at the new SP.
 
 \subsubsection{The Status Register (xPSR) and CPU Modes}
 \textbf{xPSR} (program status register) packs three critical pieces of information into one register:
 \begin{itemize}
     \item \textbf{Flags (Bits 31--28):} The \textbf{N Z C V} flags (negative, zero, carry, overflow), set by comparison instructions and used by conditional jumps.
-    \item \textbf{Thumb Bit (Bit 24):} The \textbf{T} state bit, which must always be 1 on Cortex-M. This is where bit 0 of the vector entry ends up.
+    \item \textbf{Thumb Bit (Bit 24):} The \textbf{T} state bit, which must always be 1 on Cortex-M (this is where bit 0 of the vector entry ends up).
     \item \textbf{Exception Number (Bits 8--0):} Holds the number of the exception currently being handled, or 0 if none.
 \end{itemize}
 
 That last field dictates which of the two \textbf{modes} the CPU is in:
 \begin{itemize}
-    \item \textbf{Thread mode:} The CPU runs normal code (\texttt{Reset\_Handler}, \texttt{main()}, and the functions they call). The exception number is 0. 
-    \item \textbf{Handler mode:} The CPU runs an exception handler, and the field holds that exception's number. 
+    \item \textbf{Thread mode:} The CPU runs normal code (\texttt{Reset\_Handler}, \texttt{main()}, and the functions they call); the exception number is 0.
+    \item \textbf{Handler mode:} The CPU runs an exception handler, and the field holds that exception's number.
 \end{itemize}
-\textit{Note: Code in Thread mode can also be privileged or unprivileged. All code in this specific unit runs privileged; the distinction will be explored in later sections.}
+\textit{Note:} Code in Thread mode can also be privileged or unprivileged; everything in this specific unit runs privileged, and Unit 3 explains the difference.
+
 \subsection{ARM Assembly Basics: A Load/Store Architecture}
-The boot code must be written in assembly because, before it runs, there is no valid stack and no initialized data, meaning C code cannot yet be trusted. Fortunately, you need only a handful of instructions, and each has a direct C equivalent.
+The boot code has to be written in assembly because, before it runs, there is no valid stack and no initialized data, so C code cannot yet be trusted. You need only a handful of instructions, and each has a direct C equivalent.
 
-The ARM architecture is strictly a \textbf{load/store machine}[cite: 18]. Memory is touched only by \textbf{load} instructions (\texttt{ldr}, memory to register) and \textbf{store} instructions (\texttt{str}, register to memory)[cite: 18, 19]. Arithmetic and logic operations work only on registers[cite: 18].
+\textbf{A load/store machine:} ARM arithmetic works only on registers. Memory is touched only by \textbf{load} instructions (\texttt{ldr}, memory to register) and \textbf{store} instructions (\texttt{str}, register to memory).
 
-\begin{table}[h]
+\begin{table}[h!]
 \centering
 \begin{tabular}{|l|l|}
 \hline
 \textbf{Assembly} & \textbf{C equivalent} \\ \hline
 \texttt{ldr r3, [r0]} & \texttt{r3 = *r0;} \\ \hline
 \texttt{str r3, [r1]} & \texttt{*r1 = r3;} \\ \hline
-\texttt{ldr r3, [r0], \#4} & \texttt{r3 = *r0; r0 += 4;} (i.e., \texttt{r3 = *src++;}) \\ \hline
-\texttt{str r3, [r1], \#4} & \texttt{*r1 = r3; r1 += 4;} (i.e., \texttt{*dst++ = r3;}) \\ \hline
+\texttt{ldr r3, [r0], \#4} & \texttt{r3 = *r0; r0 += 4;} (that is, \texttt{r3 = *src++;}) \\ \hline
+\texttt{str r3, [r1], \#4} & \texttt{*r1 = r3; r1 += 4;} (that is, \texttt{*dst++ = r3;}) \\ \hline
 \texttt{strb r1, [r0, \#7]} & \texttt{((uint8\_t *)r0)[7] = r1;} (one \textbf{b}yte, at offset 7) \\ \hline
 \end{tabular}
 \end{table}
 
-The square brackets mean "the memory at this address". The form \texttt{[r0], \#4} is called \textbf{post-increment}: the instruction first uses the address in \texttt{r0}, then adds 4 to \texttt{r0}[cite: 22]. Since one word is 4 bytes, a loop using this syntax walks through memory word by word, exactly like \texttt{*dst++} in C.
+The square brackets mean "the memory at this address". The form \texttt{[r0], \#4} is called \textbf{post-increment}: the instruction first uses the address in \texttt{r0}, then adds 4 to \texttt{r0}. One word is 4 bytes, so a loop using this syntax walks through memory word by word, exactly like \texttt{*dst++} in C.
 
 \subsubsection{Constants, Labels, and Jumps}
 Moving data between registers and controlling program flow requires another set of basic instructions:
 
-\begin{table}[h]
+\begin{table}[h!]
 \centering
 \begin{tabular}{|l|l|}
 \hline
 \textbf{Assembly} & \textbf{C equivalent} \\ \hline
-\texttt{ldr r0, =\_estack} & \texttt{r0 = (uint32\_t)\&\_estack;} (any 32-bit value)[cite: 19] \\ \hline
-\texttt{mov sp, r0} & \texttt{sp = r0;} (register to register)[cite: 19] \\ \hline
-\texttt{movs r3, \#0} & \texttt{r3 = 0;} (small constants only)[cite: 19] \\ \hline
+\texttt{ldr r0, =\_estack} & \texttt{r0 = (uint32\_t)\&\_estack;} (any 32-bit value) \\ \hline
+\texttt{mov sp, r0} & \texttt{sp = r0;} (register to register) \\ \hline
+\texttt{movs r3, \#0} & \texttt{r3 = 0;} (small constants only) \\ \hline
 \texttt{copy\_data:} & a \textbf{label}: a name for this address, like a C \texttt{goto} label \\ \hline
 \texttt{b copy\_data} & \texttt{goto copy\_data;} \\ \hline
-\texttt{bl main} & \texttt{main();}: \textbf{b}ranch with \textbf{l}ink, saves return address in LR \\ \hline
+\texttt{bl main} & \texttt{main();}: \textbf{b}ranch with \textbf{l}ink, saves the return address in LR \\ \hline
 \end{tabular}
 \end{table}
 
-\textbf{The 32-bit Instruction Encoding Constraint:} The \texttt{ldr rX, =value} form needs explanation. An instruction is only 16 or 32 bits long, so it mathematically cannot contain an arbitrary 32-bit constant alongside its opcode[cite: 19]. The assembler solves this by storing the constant in a small table near the code, called the \textbf{literal pool}[cite: 19]. It turns your \texttt{ldr r0, =\_estack} into "load \texttt{r0} from that table". In GDB, this appears as something like \texttt{ldr r0, [pc, \#92]} (a PC-relative address)[cite: 19]. 
+\textbf{The 32-bit Instruction Encoding Constraint (Literal Pools):} 
+The \texttt{ldr rX, =value} form needs a word of explanation because you will see it look different in gdb. An instruction is only 16 or 32 bits long, so it mathematically cannot contain an arbitrary 32-bit constant alongside its opcode. 
 
-The \texttt{.ltorg} directive at the end of the \texttt{Reset\_Handler} tells the assembler where to put this literal pool: typically after the last instruction, where the CPU will never try to execute it as code.
+The assembler therefore stores the constant in a small table of constants near the code, called the \textbf{literal pool}, and turns your \texttt{ldr r0, =\_estack} into "load r0 from that table". In gdb, this appears as something like \texttt{ldr r0, [pc, \#92]} (an address relative to the PC). 
 
-\subsection{Control Flow: Decisions, Bits, and Interrupts}
-Branching and loops in assembly rely entirely on the \texttt{xPSR} status register. A decision is a two-step process: compare values to set condition flags, then jump based on those flags[cite: 19].
+The \texttt{.ltorg} directive at the end of \texttt{Reset\_Handler} in \texttt{boot/startup.s} tells the assembler where to put this pool: typically after the last instruction, where the CPU will never try to execute it as code.
 
-\begin{table}[h]
+\subsubsection{Control Flow: Decisions, Bits, and Interrupts}
+Branching and loops in assembly rely entirely on the \texttt{xPSR} status register. A decision is a two-step process: compare values to set condition flags, then jump based on those flags.
+
+\begin{table}[h!]
 \centering
 \begin{tabular}{|l|l|}
 \hline
 \textbf{Assembly} & \textbf{C equivalent} \\ \hline
-\texttt{cmp r1, r2} & compute \texttt{r1 - r2}, keep only the flags N Z C V[cite: 20] \\ \hline
-\texttt{bhs done} & \texttt{if (r1 >= r2) goto done;} (\textbf{h}igher or \textbf{s}ame, unsigned)[cite: 20] \\ \hline
+\texttt{cmp r1, r2} & compute \texttt{r1 - r2}, keep only the flags N Z C V \\ \hline
+\texttt{bhs done} & \texttt{if (r1 >= r2) goto done;} (\textbf{h}igher or \textbf{s}ame, unsigned) \\ \hline
 \texttt{orr r1, r1, \#0x10} & \texttt{r1 |= 0x10;} \\ \hline
-\texttt{cpsid i} & stop accepting interrupts (\texttt{\_\_disable\_irq()} in C)[cite: 21] \\ \hline
-\texttt{cpsie i} & accept interrupts again (\texttt{\_\_enable\_irq()} in C) \\ \hline
+\texttt{cpsid i} & stop accepting interrupts (\texttt{\_\_disable\_irq()} in vendor C code) \\ \hline
+\texttt{cpsie i} & accept interrupts again (\texttt{\_\_enable\_irq()}) \\ \hline
 \end{tabular}
 \end{table}
 
-With \texttt{cmp} and a conditional branch, you can build any loop. A C \texttt{while} loop becomes "test at the top, jump back at the bottom"[cite: 19, 20]:
-\begin{lstlisting}[language=make]
+With \texttt{cmp} and a conditional branch, you can build any loop. A C \texttt{while} loop becomes "test at the top, jump back at the bottom":
+\begin{lstlisting}
 loop:  cmp r1, r2        @ while (r1 < r2) {
        bhs done          @
        ...               @     body
        b   loop          @ }
 done:
 \end{lstlisting}
-The loop continues while \texttt{r1 < r2}; as soon as \texttt{r1 >= r2}, \texttt{bhs} jumps out of the loop[cite: 20]. \textit{(Note: \texttt{@} starts a comment in ARM assembly).}
+The loop continues while \texttt{r1 < r2}; as soon as \texttt{r1 >= r2}, \texttt{bhs} jumps out of the loop.
 
-\subsection{Assembler Directives}
-Lines that start with a dot (\texttt{.}) produce no instructions: they steer the assembler itself[cite: 20]. The ones used in \texttt{boot/startup.s} are:
+\subsubsection{Assembler Directives}
+Lines that start with a dot (\texttt{.}) produce no instructions: they steer the assembler itself. The directives used in \texttt{boot/startup.s} are:
 
-\begin{lstlisting}[language=make]
+\begin{lstlisting}
     .section .isr_vector,"a",%progbits   @ put what follows in section .isr_vector
     .global isr_vector                   @ make the name visible to the linker
 isr_vector:
@@ -607,103 +609,107 @@ isr_vector:
 
     .section .text,"ax",%progbits
     .global Reset_Handler
-    .thumb_func                          @ next label is Thumb code (bit 0 = 1)
+    .thumb_func                          @ next label is Thumb code: its address gets bit 0 = 1
 Reset_Handler:
 \end{lstlisting}
 
-This vector table block means, in C equivalent:
+The vector table block translates to the following C equivalent:
 \begin{lstlisting}[language=c]
 __attribute__((section(".isr_vector")))
 const uint32_t isr_vector[] = { (uint32_t)&_estack, (uint32_t)Reset_Handler };
 \end{lstlisting}
 
 \begin{itemize}
-    \item \texttt{.section} chooses the section, with flags: \texttt{"a"} means the section occupies space in the image, \texttt{"x"} means it is executable.
-    \item \texttt{.global} makes a name visible to other files and to the linker; without it, a label acts like a \texttt{static} name in C[cite: 20].
-    \item \texttt{.word} allocates exactly one 32-bit word and stores the given value inside it[cite: 20].
-    \item \texttt{.thumb\_func} dictates that the next label is Thumb code[cite: 20]. This instructs the tools to store \texttt{Reset\_Handler} with bit 0 set to 1, which the Cortex-M strictly requires[cite: 20].
+    \item \texttt{.section}: Chooses the section, with flags. \texttt{"a"} means the section occupies space in the image; \texttt{"x"} means it is executable.
+    \item \texttt{.global}: Makes a name visible to other files and to the linker. Without it, a label acts like a \texttt{static} name in C.
+    \item \texttt{.word}: Allocates exactly one 32-bit word and stores the given value inside it.
+    \item \texttt{.thumb\_func}: Dictates that the next label is Thumb code. This instructs the tools to store \texttt{Reset\_Handler} with bit 0 set to 1, which is where the \texttt{0x9} in the base (and \texttt{0x41} in the solution) comes from.
 \end{itemize}
-Finally, the file also uses \texttt{.type} and \texttt{.size} directives to tell GDB and \texttt{nm} whether a name is code or data, and how big it is.
+The file also uses \texttt{.type} and \texttt{.size} to tell \texttt{gdb} and \texttt{nm} whether a name is code or data and its total size.
 
 \section{Writing the Startup Script (\texttt{Reset\_Handler})}
-The \texttt{Reset\_Handler} in \texttt{boot/startup.s} is the very first piece of code executed by the CPU. Its one job is to turn a bare, uninitialized hardware chip into an environment fully capable of safely running C code[cite: 20].
+The \texttt{Reset\_Handler} in \texttt{boot/startup.s} has one critical job: to turn a bare CPU into an environment that can safely run C code.
 
-Here is the complete plan, in the order the code does it:
-\begin{table}[h]
+Here is the complete sequence of operations, in the exact order the boot code executes them:
+\begin{table}[h!]
 \centering
 \begin{tabular}{|l|l|}
 \hline
 \textbf{Step} & \textbf{Why} \\ \hline
-1. mask interrupts & nothing may interrupt a half-built system \\ \hline
-2. set SP & C functions need a stack \\ \hline
-3. copy \texttt{.data} FLASH $\rightarrow$ RAM & initialized globals get their values \\ \hline
-4. zero \texttt{.bss} & C promises uninitialized globals start at 0 \\ \hline
-5. configure the CPU & vector table address, fault handlers, traps, priorities \\ \hline
-6. unmask interrupts, \texttt{bl main} & hand over to C \\ \hline
-7. loop forever & if \texttt{main} ever returns, there is nowhere to go \\ \hline
+1. Mask interrupts & Nothing may interrupt a half-built system \\ \hline
+2. Set SP & C functions inherently need a stack \\ \hline
+3. Copy \texttt{.data} FLASH $\rightarrow$ RAM & Initialized global variables must get their values \\ \hline
+4. Zero \texttt{.bss} & C promises uninitialized global variables start at 0 \\ \hline
+5. Configure the CPU & Set up vector table address, fault handlers, traps, priorities \\ \hline
+6. Unmask interrupts, \texttt{bl main} & Hand execution over to C \\ \hline
+7. Loop forever & If \texttt{main} ever returns, there is nowhere to go \\ \hline
 \end{tabular}
 \end{table}
 
-In the base skeleton, \texttt{Reset\_Handler} has only steps 6 and 7 (and without the unmask). You write everything else. In the rest of this unit, you go through the steps in order, together with the in-class checks that prove each one works.
+In the base skeleton, \texttt{Reset\_Handler} has only steps 6 and 7 (and without the unmask). The following sections go through building the remaining steps in order.
 
 \subsection{Steps 1 and 2: Mask Interrupts and Set the Stack}
-An \textbf{interrupt} is an exception raised by hardware (e.g., a timer expiring or a device receiving data): the CPU drops what it is doing and runs that interrupt's handler[cite: 21]. During setup, nothing is ready to handle one: a handler written in C could read a variable that has not been initialized yet. 
+An \textbf{interrupt} is an exception raised by hardware (e.g., a timer expiring or a device receiving data): the CPU drops what it is doing and runs that interrupt's handler. During setup, absolutely nothing is ready to handle one: a handler written in C could attempt to read a variable that has not been initialized yet.
 
-So the very first instruction, \texttt{cpsid i}, tells the CPU to ignore interrupts for now. (No device has been told to raise an interrupt yet, so this is not strictly needed at this moment; writing it makes the rule explicit instead of relying on luck.)
+Therefore, the very first instruction, \texttt{cpsid i}, tells the CPU to explicitly ignore interrupts for now. (While no device has been told to raise an interrupt yet, writing it makes the rule explicit instead of relying on luck).
 
-Then, the stack pointer (SP) must be set:
-\begin{lstlisting}[language=make]
-C:    sp = &_estack;          ASM:  ldr r0, =_estack    @ top of RAM, 0x20400000
-                                    mov sp, r0
+Next, the stack pointer (\texttt{SP}) must be set:
+\begin{lstlisting}
+@ C equivalent: sp = &_estack;
+ldr r0, =_estack    @ top of RAM, 0x20400000
+mov sp, r0
 \end{lstlisting}
 
-C has no way to name SP directly, so the C column is pseudo-code. You might wonder why this is needed, since the hardware already loaded SP from word 0 of the vector table at reset[cite: 21]. The answer is that \texttt{Reset\_Handler} is not always reached through a real reset: a bootloader or a debugger may jump to it directly, with SP holding any random value[cite: 21]. 
+Because C has no way to name SP directly, the C equivalent is pseudo-code. One might wonder why this step is strictly needed, since the hardware already loaded SP from word 0 of the vector table at reset. The answer is that \texttt{Reset\_Handler} is not \textit{always} reached through a real hardware reset: a custom bootloader or a debugger may jump to it directly, with SP holding an arbitrary or invalid value. 
 
-Setting SP explicitly makes the code correct in every case, and shows that the stack is nothing more than an address in a register. Notice the two-step pattern: SP is a special register, so the address is first loaded into an ordinary register (\texttt{r0}), and then copied into SP with \texttt{mov}[cite: 21].
+Setting SP explicitly makes the code robust and correct in every case, and demonstrates that the stack is nothing more than an address in a register. Notice the two-step ARM pattern: because SP is a special register, the address is first loaded into an ordinary general-purpose register (\texttt{r0}), and then explicitly copied into SP using \texttt{mov}.
 
 \subsection{Step 3: Copy \texttt{.data} from FLASH to RAM}
-This is the step that fixes the base skeleton's missing print line[cite: 21]. The linker script gives you three addresses:
-\begin{lstlisting}
+This is the critical step that fixes the base skeleton's missing print line. The linker script gives you three key addresses:
+
+\begin{lstlisting}[language=make]
 FLASH:  [ .text | .rodata | initial values of .data ]
                              ^ _sidata
 RAM:    [ .data             | .bss | ...        stack ]
           ^ _sdata          ^ _edata                  ^ _estack
 \end{lstlisting}
 
-The copy is a simple loop, which you can write first in C and then translate line by line into assembly[cite: 22]:
-\begin{lstlisting}[language=make]
-C                                     ASM
-uint32_t *src = &_sidata;             ldr r0, =_sidata
-uint32_t *dst = &_sdata;              ldr r1, =_sdata
-                                      ldr r2, =_edata
-while (dst < &_edata)             copy_data:  cmp r1, r2
-                                              bhs copy_data_done
-    *dst++ = *src++;                          ldr r3, [r0], #4
-                                              str r3, [r1], #4
-                                              b   copy_data
-                                  copy_data_done:
-\end{lstlisting}
+The copy operation is a simple loop, which you can write first in C and then translate line by line into assembly:
 
-Register \texttt{r0} plays the role of \texttt{src}, \texttt{r1} of \texttt{dst}, and \texttt{r2} holds the end address. The loop is \texttt{copy\_data}, and it exits to \texttt{copy\_data\_done}. It copies whole words, 4 bytes at a time; this is safe because the linker script aligns the start and end of \texttt{.data} to multiples of 4.
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{C Equivalent} & \textbf{ARM Assembly} \\ \hline
+\texttt{uint32\_t *src = \&\_sidata;} & \texttt{ldr r0, =\_sidata} \\
+\texttt{uint32\_t *dst = \&\_sdata;} & \texttt{ldr r1, =\_sdata} \\
+\texttt{                      } & \texttt{ldr r2, =\_edata} \\ \hline
+\texttt{while (dst < \&\_edata)} & \texttt{copy\_data: cmp r1, r2} \\
+\texttt{                      } & \texttt{            bhs copy\_data\_done} \\ \hline
+\texttt{    *dst++ = *src++;  } & \texttt{            ldr r3, [r0], \#4} \\
+\texttt{                      } & \texttt{            str r3, [r1], \#4} \\
+\texttt{                      } & \texttt{            b   copy\_data} \\ \hline
+\texttt{                      } & \texttt{copy\_data\_done:} \\ \hline
+\end{tabular}
+\end{table}
 
-\subsubsection{Try It: Bring Data to Life}
-In class, you write steps 1-3 into the base skeleton, just before \texttt{bl main}, and run it again:
+Register \texttt{r0} plays the role of \texttt{src}, \texttt{r1} of \texttt{dst}, and \texttt{r2} holds the end address. The loop is named \texttt{copy\_data} in \texttt{boot/startup.s}, and it exits to \texttt{copy\_data\_done}. It copies whole words, 4 bytes at a time; this is perfectly safe because the linker script intentionally aligns the start and end of \texttt{.data} to multiples of 4.
+
+If you write steps 1--3 into the base skeleton (just before \texttt{bl main}) and run it, the missing line finally appears:
 \begin{lstlisting}[language=bash]
 make run
-\end{lstlisting}
-And the missing line finally appears:
-\begin{lstlisting}
 main: hello from the base
 main: this text lives in .data
 \end{lstlisting}
-Before the copy, \texttt{data\_message} sat in RAM as all zeros and printed as an empty string; now it successfully holds its initial value[cite: 22].
+Before the copy, \texttt{data\_message} sat in RAM as all zeros and printed as an empty string; now it successfully holds its initial value.
 
 \subsubsection{Watching the Copy Loop in GDB}
-It is worth watching your loop run because it makes the idea of LMA and VMA concrete. Start \texttt{make debug} in terminal 1 and GDB in terminal 2, then:
-\begin{lstlisting}
+It is worth watching your loop run because it makes the abstract ideas of LMA and VMA concrete. Start \texttt{make debug} in terminal 1 and gdb in terminal 2, then:
+
+\begin{lstlisting}[language=bash]
 (gdb) target remote :1234
 (gdb) display/i $pc
-(gdb) stepi                      # press Enter to repeat until "cmp r1, r2"
+(gdb) stepi                      # press Enter to repeat, until "cmp r1, r2"
 (gdb) p/x $r0                    # src: a FLASH address
 (gdb) p/x $r1                    # dst: 0x20000000, start of RAM
 (gdb) x/s &data_message          # "" : nothing copied yet
@@ -714,73 +720,91 @@ It is worth watching your loop run because it makes the idea of LMA and VMA conc
 (gdb) x/s &data_message          # "main: this text lives in .data\n"
 \end{lstlisting}
 
-As you step, \texttt{display/i \$pc} shows each instruction just before it runs. When you reach \texttt{cmp}, \texttt{r1} holds \texttt{0x20000000}, and the string is empty. Five \texttt{stepi} commands execute one full turn of the loop, moving \texttt{r1} to \texttt{0x20000004}. By continuing to the breakpoint at the end, \texttt{r1} climbs until it equals \texttt{r2} (\texttt{0x20000020}), and only then does the string appear in RAM.
+As you step, \texttt{display/i \$pc} shows each instruction just before it runs: \texttt{cpsid i}, then the \texttt{ldr} from the literal pool, then \texttt{mov sp, r0}, then the three \texttt{ldr} commands that load the loop bounds. 
+
+When you reach \texttt{cmp r1, r2}, \texttt{r0} holds a small flash address (e.g., \texttt{0x88}, depending on how much code precedes it), and \texttt{r1} holds \texttt{0x20000000}. \texttt{x/s \&data\_message} shows the empty string because nothing has been copied yet. 
+
+Five more \texttt{stepi} commands execute one full turn of the loop (\texttt{cmp}, \texttt{bhs}, \texttt{ldr}, \texttt{str}, \texttt{b}), and \texttt{r1} moves to \texttt{0x20000004} (one word copied). Instead of stepping 8 times more, you put a breakpoint on the label after the loop and continue. \texttt{r1} climbs until it equals \texttt{r2} (\texttt{\&\_edata}, which is \texttt{0x20000020}), and only then does \texttt{x/s \&data\_message} show the full string perfectly mapped in RAM.
 
 \subsubsection{Try It: Breaking the Stack on Purpose}
-Seeing a wrong SP go wrong is the best way to believe that SP matters. In \texttt{boot/startup.s}, replace \texttt{\_estack} with a bad address:
+Seeing a wrong SP fail is the best way to believe that SP matters. In \texttt{boot/startup.s}, inside \texttt{Reset\_Handler}, find the line you wrote in Step 2 (\texttt{ldr r0, =\_estack}) and intentionally replace \texttt{\_estack} with a bad address. (Note that the value the CPU loaded from vector word 0 at reset is still the correct one; it is your \texttt{mov sp, r0} that forcefully overwrites it with the bad address).
 
-\textbf{Test 1: Address Outside of RAM (\texttt{0x30000000})}
-If you set SP to \texttt{0x30000000}, nothing prints[cite: 23]. QEMU stops with:
-\begin{lstlisting}
+\paragraph{Test 1: Address Outside of RAM (\texttt{0x30000000})}
+If you force SP to \texttt{0x30000000} and run \texttt{make run}, nothing is printed at all. QEMU stops with:
+\begin{lstlisting}[language=bash]
 qemu: fatal: Lockup: can't escalate 3 to HardFault (current priority -1)
 \end{lstlisting}
-When \texttt{main} starts, it pushes registers to the stack (below \texttt{0x30000000}), triggering a memory fault[cite: 23]. The CPU tries to run a fault handler to report it, but entering a handler requires writing to the stack, which fails again[cite: 23]. Unable to report the fault, the CPU gives up and enters a \textbf{Lockup} state[cite: 23].
+Here is what happened: the first thing \texttt{main} does is push registers onto the stack, writing below \texttt{0x30000000}, where there is no physical memory. That access triggers a fault. The CPU tries to report the fault by executing a fault handler, but entering a handler inherently requires writing to the stack, which fails again. With no way to report the fault, the CPU gives up and enters a state called \textbf{lockup}.
 
-\textbf{Test 2: Unaligned Stack Pointer (\texttt{0x20000001})}
-If you force SP to an odd address inside RAM, \texttt{make run} prints nothing[cite: 23]. If you inspect this in GDB (\texttt{info registers sp}), it says \texttt{0x20000000}. The CPU silently drops the two lowest bits of SP because SP must always be a multiple of 4[cite: 23]. The stack now starts at the bottom of RAM and grows \textit{below} it into invalid memory[cite: 23]. The function calls fail silently.
+\paragraph{Test 2: Unaligned Stack Pointer (\texttt{0x20000001})}
+If you force SP to an odd address inside RAM, \texttt{make run} prints nothing. To see why, start \texttt{make debug}, stop right after your \texttt{mov sp, r0}, and check the register: \texttt{info registers sp} returns \texttt{0x20000000}. 
+
+The CPU silently drops the two lowest bits of SP because the stack pointer must always be a multiple of 4. The stack now inadvertently starts at the very bottom of RAM and grows \textit{below} it. At \texttt{break main}, SP is already under \texttt{0x20000000} (e.g., \texttt{0x1ffffff0}), in an address range where QEMU simply ignores writes. There is no explicit crash, just no output at all because the function calls fail silently. (Remember to restore \texttt{ldr r0, =\_estack} before continuing).
 
 \subsection{Step 4: Zero the \texttt{.bss} Section}
-The C standard promises that global variables without an initializer (\texttt{int counter;}) start at 0[cite: 23]. They live in \texttt{.bss}, between \texttt{\_sbss} and \texttt{\_ebss} in RAM, and nothing in flash holds their value: the boot code must actively write the zeros[cite: 23]. 
+The C standard strictly promises that global variables without an explicit initializer (e.g., \texttt{int counter;}) will start at \texttt{0}[cite: 46]. They physically reside in the \texttt{.bss} section, mapped between \texttt{\_sbss} and \texttt{\_ebss} in RAM[cite: 46]. Because nothing in flash holds their zeroed value, the boot code must explicitly write these zeros[cite: 46]. 
 
-It is the same loop as the copy, but without a source pointer:
-\begin{lstlisting}[language=make]
-C                                 ASM
-uint32_t *dst = &_sbss;           ldr  r1, =_sbss
-                                  ldr  r2, =_ebss
-                                  movs r3, #0
-while (dst < &_ebss)          zero_bss:  cmp r1, r2
-                                         bhs zero_bss_done
-    *dst++ = 0;                          str r3, [r1], #4
-                                         b   zero_bss
-                              zero_bss_done:
-\end{lstlisting}
+This is the exact same looping logic as the data copy, but without a source pointer reading from flash[cite: 46]:
 
-This is \texttt{zero\_bss} in \texttt{boot/startup.s}. In the current program, \texttt{.bss} happens to be empty, so the loop exits immediately, but the first global you add will rely on it. Remember that RAM is \textbf{not} zero at power-on on real hardware; QEMU zeroing it for you is a convenience you must not count on!
-
-\subsection{Exceptions and Faults: One Family}
-With steps 1-4, \texttt{Reset\_Handler} does everything that the previous C startup code did. The remaining steps go further: they configure the CPU so that errors are caught and reported.
-
-You have already met the word \textbf{exception}: any hardware event that makes the CPU stop the current code and run a specific handler function in Handler mode[cite: 24]. The Cortex-M3 defines the following family of exceptions:
-
-\begin{table}[h]
-    \centering
-    \begin{tabular}{|l|l|p{8cm}|}
-        \hline
-        \textbf{\#} & \textbf{Exception} & \textbf{Raised by} \\ \hline
-        0 & \textit{(not an exception)} & this slot holds the initial SP value \\ \hline
-        1 & Reset & power-on, reset button \\ \hline
-        2 & NMI & non-maskable interrupt: cannot be ignored[cite: 24] \\ \hline
-        3 & \textbf{HardFault} & any fault with nowhere else to go[cite: 24] \\ \hline
-        4 & \textbf{MemManage} & breaking memory protection rules[cite: 24] \\ \hline
-        5 & \textbf{BusFault} & access to an address where nothing answers, or refuses access[cite: 24] \\ \hline
-        6 & \textbf{UsageFault} & bad use of an instruction: undefined opcode, Thumb bit 0, divide by 0[cite: 24] \\ \hline
-        7--10 & \textit{reserved} & unused: the slot must hold \texttt{0} \\ \hline
-        11 & SVCall & the \texttt{svc} instruction \\ \hline
-        12 & DebugMonitor & debug events (unused here) \\ \hline
-        13 & \textit{reserved} & unused: the slot must hold \texttt{0} \\ \hline
-        14 & PendSV & a request raised by software \\ \hline
-        15 & SysTick & the CPU's built-in timer \\ \hline
-        16+ & IRQs & device interrupts \\ \hline
-    \end{tabular}
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{C Equivalent} & \textbf{ARM Assembly} \\ \hline
+\texttt{uint32\_t *dst = \&\_sbss;} & \texttt{ldr r1, =\_sbss} \\
+\texttt{                      } & \texttt{ldr r2, =\_ebss} \\
+\texttt{                      } & \texttt{movs r3, \#0} \\ \hline
+\texttt{while (dst < \&\_ebss)} & \texttt{zero\_bss: cmp r1, r2} \\
+\texttt{                      } & \texttt{           bhs zero\_bss\_done} \\ \hline
+\texttt{    *dst++ = 0;       } & \texttt{           str r3, [r1], \#4} \\
+\texttt{                      } & \texttt{           b   zero\_bss} \\ \hline
+\texttt{                      } & \texttt{zero\_bss\_done:} \\ \hline
+\end{tabular}
 \end{table}
 
-Apart from the first two slots, all remaining slots in the vector table are associated with these exceptions[cite: 24]. Specific fault handlers (like MemManage, BusFault, and UsageFault) are crucial for both debugging and security[cite: 24].
+This loop is labeled \texttt{zero\_bss} in \texttt{boot/startup.s}[cite: 46]. In the current base skeleton, \texttt{.bss} happens to be empty (so \texttt{\_sbss} equals \texttt{\_ebss}), meaning the loop exits immediately[cite: 46]. However, the first uninitialized global you add (like \texttt{int total;}) will absolutely rely on it[cite: 46]. 
 
-\subsubsection{Completing the Table with Weak Symbols}
-The base table has 2 words, but the CPU expects one word for each exception from 0 to 15 (16 words in total). Every slot needs \textit{some} valid address, even for exceptions you have no handler for yet. The reserved slots (7--10 and 13) must contain \texttt{0}.
+\textit{Warning:} Remember that RAM is \textit{not} zeroed at power-on on real hardware[cite: 46]. While the QEMU emulator zeroing RAM for you is a convenience, you must not architecturally count on it[cite: 46].
 
-To achieve this without writing empty functions for every exception, a best practice is to use a generic template leveraging \textbf{weak symbols} and aliases in assembly:
-\begin{lstlisting}[language=make]
+With steps 1 through 4 completed, \texttt{Reset\_Handler} replicates everything that the previous C startup code did[cite: 46]. The remaining steps go further: they configure the CPU so that errors are caught, escalated, and reported[cite: 46].
+
+\section{Exceptions and Faults: One Family}
+You have already encountered the concept of an \textbf{exception}: any hardware or software event that forces the CPU to stop executing the current code and run a specific handler function[cite: 46]. The CPU fetches the address of this handler from the vector table and executes it in Handler mode[cite: 46]. 
+
+The Cortex-M3 physically defines the following family of exceptions[cite: 46]:
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{\#} & \textbf{Exception} & \textbf{Raised by} \\ \hline
+0 & \textit{(not an exception)} & This slot holds the initial SP value \\ \hline
+1 & Reset & Power-on, reset button \\ \hline
+2 & NMI & Non-maskable interrupt: cannot be ignored \\ \hline
+3 & \textbf{HardFault} & Any fault with nowhere else to go \\ \hline
+4 & \textbf{MemManage} & Breaking memory protection rules \\ \hline
+5 & \textbf{BusFault} & Access to an address where nothing answers, or that refuses access \\ \hline
+6 & \textbf{UsageFault} & Bad use of an instruction: undefined opcode, Thumb bit 0, divide by 0 \\ \hline
+7--10 & \textit{reserved} & Unused: the slot must hold \texttt{0} \\ \hline
+11 & SVCall & The \texttt{svc} instruction \\ \hline
+12 & DebugMonitor & Debug events (unused here) \\ \hline
+13 & \textit{reserved} & Unused: the slot must hold \texttt{0} \\ \hline
+14 & PendSV & A request raised by software \\ \hline
+15 & SysTick & The CPU's built-in timer \\ \hline
+16+ & IRQs & External device interrupts \\ \hline
+\end{tabular}
+\end{table}
+
+Slots 7--10 and 13 are strictly reserved[cite: 46]. The four specific faults (3 through 6) are the CPU's direct way of signaling that "the program did something wrong"[cite: 46]. 
+
+Crucially, at power-on reset, only the \texttt{HardFault} exception is actively listening[cite: 46]. The three more specific faults (\texttt{MemManage}, \texttt{BusFault}, \texttt{UsageFault}) are disabled by default[cite: 46]. When a specific fault is disabled, it \textit{escalates} directly to a \texttt{HardFault}[cite: 46]. This escalation mechanism explains the "can't escalate 3 to HardFault" lockup message we saw earlier: the CPU was trying to escalate to exception 3 (\texttt{HardFault}), but because the handler could not safely push to the stack, it failed[cite: 46].
+
+\subsection{Completing the Vector Table with Weak Symbols}
+The base table only has 2 words defined, but the Cortex-M3 expects one word for each exception from 0 to 15 (16 words in total)[cite: 46]. Every slot strictly needs \textit{some} valid address, even for exceptions you have no custom handler for yet, because if that hardware exception triggers, the CPU will blindly jump to whatever address the slot contains[cite: 46]. (The reserved slots must contain \texttt{0})[cite: 46].
+
+Therefore, \texttt{isr\_vector} in \texttt{boot/startup.s} gets 14 additional \texttt{.word} entries[cite: 46]. Instead of writing a dozen empty functions for every single exception, the standard engineering practice is to route them all to a generic default loop using weak symbols and aliases in assembly[cite: 47]:
+
+\begin{lstlisting}
     .word HardFault_Handler                    @ slot 3, and so on up to 15
     .weak      HardFault_Handler               @ may be replaced from C
     .thumb_set HardFault_Handler, Default_Handler
@@ -788,88 +812,653 @@ Default_Handler:
     b Default_Handler                          @ for (;;) {}
 \end{lstlisting}
 
-Which in C (with a GCC extension) translates to:
+Which translates to the following compiler directive in C[cite: 47]:
 \begin{lstlisting}[language=c]
 void HardFault_Handler(void) __attribute__((weak, alias("Default_Handler")));
 \end{lstlisting}
 
-\paragraph{How it works:}
-\begin{enumerate}
-    \item \texttt{.word HardFault\_Handler} places the address of the label into the table slot.
-    \item \texttt{.thumb\_set} tells the assembler: "Make \texttt{HardFault\_Handler} another name for \texttt{Default\_Handler} (same address, marked as Thumb code)."
-    \item \texttt{.weak} makes that name a \textbf{weak symbol}: a default that gives way. If a developer writes a normal, non-weak C function named \texttt{void HardFault\_Handler(void)}, the linker silently drops the assembly default and routes the exception directly to the developer's C function.
-\end{enumerate}
+\textbf{How it works:}
+\begin{itemize}
+    \item \texttt{.word HardFault\_Handler} places the address of the label into the exact table slot[cite: 47].
+    \item \texttt{.thumb\_set} dictates to the assembler: "Make \texttt{HardFault\_Handler} another name for \texttt{Default\_Handler} (sharing the same address, marked as Thumb code)"[cite: 47].
+    \item \texttt{.weak} makes that name a \textbf{weak symbol}: a default implementation that easily yields[cite: 47]. If any other file (like \texttt{src/main.c}) explicitly defines a normal, non-weak function named \texttt{void HardFault\_Handler(void)}, the linker silently drops the weak assembly default and routes the hardware exception directly to the developer's custom C function[cite: 47].
+\end{itemize}
 
-\texttt{Default\_Handler} itself is an infinite loop: an unexpected exception is a bug, and freezing at a known place is much easier to diagnose with a debugger than running off into random memory.
+\texttt{Default\_Handler} itself is simply an infinite loop[cite: 47]. An unexpected exception is a critical system bug, and freezing the CPU at a known, predictable place is much easier to diagnose in a debugger than allowing it to run off into random memory addresses[cite: 47].
 
-\paragraph{The Effect on Memory Layout}
-Completing the table moves your code. The table grows from 2 words (8 bytes) to 16 words (64 bytes). Because the executable code still comes right after it in FLASH, \texttt{Reset\_Handler} moves from address \texttt{0x8} to \texttt{0x40}. If you attach GDB at reset now, \texttt{info registers pc} shows \texttt{0x40}, and examining address 0 (\texttt{x/2wx 0}) prints \texttt{0x20400000 0x00000041} (the Thumb bit added to \texttt{0x40}).
+\subsubsection{The Effect on Memory Layout}
+Completing the vector table immediately alters your memory layout[cite: 47]. The table grows physically from 2 words to 16 words (from 8 bytes to 64 bytes)[cite: 47]. Because the executable code still flows right after it in FLASH, the start of \texttt{Reset\_Handler} moves down from address \texttt{0x8} to \texttt{0x40}[cite: 47]. 
 
+If you attach GDB at reset now, \texttt{info registers sp pc} will show \texttt{pc 0x40 <Reset\_Handler>}, and examining address 0 (\texttt{x/2wx 0}) will print \texttt{0x0 <isr\_vector>: 0x20400000 0x00000041} (proving the Thumb bit is added to the \texttt{0x40} address)[cite: 47]. 
 
+If you examine the \texttt{nm} output of the final binary, you will clearly see the effect of the weak symbols: \texttt{NMI\_Handler}, \texttt{PendSV\_Handler}, \texttt{SysTick\_Handler}, and \texttt{DebugMon\_Handler} are explicitly marked \texttt{W} (weak) and all share the exact same memory address as \texttt{Default\_Handler}[cite: 47]. Meanwhile, any handlers written and compiled from \texttt{src/main.c} are firmly marked \texttt{T} (Text) at their own unique addresses[cite: 47].
 
+\subsection{CPU Settings Live at Memory Addresses}
+The remaining configuration steps change settings inside the CPU core itself. You do not need special assembly instructions for most of them: the Cortex-M architecture makes these settings physically available as 32-bit registers at fixed memory addresses in the system area of the memory map (specifically, from \texttt{0xE000E000} to \texttt{0xE000EFFF}). 
 
+The specific group of registers that controls exceptions is called the \textbf{System Control Block (SCB)}. You can change them using ordinary load and store instructions.
 
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{C Equivalent} & \textbf{ARM Assembly} \\ \hline
+\texttt{\#define SCB\_SHCSR (*(volatile uint32\_t *)0xE000ED24)} & \\ 
+\texttt{SCB\_SHCSR |= (1u << 16);} & \texttt{ldr r0, =0xE000ED24   @ address} \\
+& \texttt{ldr r1, [r0]          @ read} \\
+& \texttt{orr r1, r1, \#0x10000 @ modify} \\
+& \texttt{str r1, [r0]          @ write} \\ \hline
+\end{tabular}
+\end{table}
 
+\subsubsection{The Read-Modify-Write Pattern and \texttt{volatile}}
+This architectural pattern is known as \textbf{read-modify-write}: you read the current value of the register, modify only the specific bits you care about using a bitwise OR, and write the result back. This ensures that all other configuration bits in the register keep their original values.
 
+In the C version, the \texttt{volatile} keyword is mandatory. It explicitly tells the compiler that every memory access must truly happen exactly in the order written. Without it, the compiler's optimizer might skip a read (assuming "the value cannot have changed") or remove a write (assuming "nobody reads it"). For hardware registers, both assumptions are completely false.
 
+\textit{Debugging tip:} You can read these registers from gdb just like any other memory address. For example, \texttt{x/wx 0xE000ED00} shows \texttt{0x410fc231}, which is the CPUID register identifying the chip as an ARM (\texttt{0x41}) Cortex-M3 (\texttt{0xc23}).
 
+\subsection{Step 5: VTOR, Where the Vector Table Is}
+When an exception happens, the CPU does not technically read slot $N$ strictly at address \texttt{4 * N}. It reads it at \texttt{\textbf{VTOR} + 4 * N}, where \textbf{VTOR} (the Vector Table Offset Register, located at \texttt{0xE000ED08}) holds the base address of the table. 
 
+Its default value at reset is \texttt{0x00000000}, which is exactly why our initial table must reside at address 0. However, the boot code explicitly writes the address of \texttt{isr\_vector} into it anyway:
 
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{C Equivalent} & \textbf{ARM Assembly} \\ \hline
+\texttt{*(volatile uint32\_t *)0xE000ED08 = } & \texttt{ldr r0, =0xE000ED08} \\
+\texttt{                       (uint32\_t)isr\_vector;} & \texttt{ldr r1, =isr\_vector} \\
+& \texttt{str r1, [r0]} \\ \hline
+\end{tabular}
+\end{table}
 
+(Note: The table address must be suitably aligned, at least to 128 bytes, because the low bits of VTOR are not used by the hardware).
 
+Why perform this write if our table is already at 0? Because in real production systems, the table is often located elsewhere. A \textbf{bootloader} sitting at address 0 may start an application stored higher in the flash memory, whose own vector table is at a different address. The application must then point VTOR to its own table. Alternatively, an OS may copy its table into RAM to replace handlers dynamically while running. Explicitly writing VTOR ensures the boot code remains correct regardless of where the final image is placed.
 
+\textbf{Where you write it:} In \texttt{Reset\_Handler}, right after the label \texttt{zero\_bss\_done:} (the end of step 4). Because you are setting the entire register to a new absolute address, no read-modify-write is needed. In gdb at \texttt{main}, \texttt{x/wx 0xE000ED08} will show \texttt{0x00000000}: the same as the reset value, confirming the table is at address 0 (verified by \texttt{p/x \&isr\_vector}).
 
-\subsection{\textcolor{red}{Step 5: Configure the CPU (System Control Block)}}
-The remaining configuration steps change settings inside the CPU core itself. You do not need special instructions for most of them: the Cortex-M makes these settings available as 32-bit registers at fixed memory addresses, in the system area of the memory map (\texttt{0xE000E000}--\texttt{0xE000EFFF}). 
+\subsection{Step 6: SHCSR, Separate Fault Handlers}
+The \textbf{SHCSR} (System Handler Control and State Register) at address \texttt{0xE000ED24} enables the three specific hardware faults:
 
-The group of registers that controls exceptions is called the \textbf{System Control Block (SCB)}. You change them with ordinary loads and stores:
-
-\begin{lstlisting}[language=make]
-C                                   ASM
-#define SCB_SHCSR (*(volatile uint32_t *)0xE000ED24)
-SCB_SHCSR |= (1u << 16);            ldr r0, =0xE000ED24   @ address
-                                    ldr r1, [r0]          @ read
-                                    orr r1, r1, #0x10000  @ modify
-                                    str r1, [r0]          @ write
-\end{lstlisting}
-
-\subsubsection{\textcolor{red}{Read-Modify-Write and the \texttt{volatile} Keyword}}
-This pattern is called \textbf{read-modify-write}: you read the current value, set only the bits you care about, and write the result back, so that all the other bits keep their original values.
-
-The \texttt{volatile} keyword in the C version is absolutely critical. It tells the compiler that every memory access must really happen exactly in the order written. The compiler may not skip a read because "the value can't have changed", nor remove a write because "nobody reads it". For hardware registers, both of those optimization assumptions are false.
-
-You can read these registers from GDB like any memory. For example, \texttt{x/wx 0xE000ED00} shows \texttt{0x410fc231}, the CPUID register, which identifies the CPU as an ARM Cortex-M3.
-
-\subsubsection{\textcolor{red}{VTOR: Vector Table Offset Register}}
-When an exception happens, the CPU reads the vector table. The \textbf{VTOR} register (at \texttt{0xE000ED08}) holds the memory address of the table. Its value at reset is \texttt{0x00000000}, which is why our initial table must be at address 0. 
-
-However, in real systems, the table is often moved (e.g., a bootloader starting an application higher in flash, or a program copying its table into RAM to modify handlers). Writing VTOR explicitly makes the boot code robust wherever the image is placed:
-\begin{lstlisting}[language=make]
-C:  *(volatile uint32_t *)0xE000ED08 = (uint32_t)isr_vector;
-
-ASM:  ldr r0, =0xE000ED08
-      ldr r1, =isr_vector
-      str r1, [r0]
-\end{lstlisting}
-Because we are setting the entire 32-bit register, no read-modify-write is needed. \textit{(Note: The table address must be aligned to at least 128 bytes).}
-
-\subsubsection{\textcolor{red}{SHCSR: System Handler Control and State Register}}
-By default at reset, specific faults (MemManage, BusFault, UsageFault) are disabled, meaning all faults escalate to HardFault. You get a single handler for every kind of error, making it impossible to tell \textit{what} went wrong.
-
-The \textbf{SHCSR} register (at \texttt{0xE000ED24}) enables these specific faults:
-\begin{table}[h]
+\begin{table}[h!]
 \centering
 \begin{tabular}{|l|l|l|}
 \hline
 \textbf{Bit} & \textbf{Name} & \textbf{When set} \\ \hline
 16 & MEMFAULTENA & MemManage faults run \texttt{MemManage\_Handler} \\ \hline
-17 & BUSFAULTENA & bus faults run \texttt{BusFault\_Handler} \\ \hline
-18 & USGFAULTENA & usage faults run \texttt{UsageFault\_Handler} \\ \hline
+17 & BUSFAULTENA & Bus faults run \texttt{BusFault\_Handler} \\ \hline
+18 & USGFAULTENA & Usage faults run \texttt{UsageFault\_Handler} \\ \hline
 \end{tabular}
 \end{table}
 
-The boot code must set bits 16--18 (the value \texttt{0x00070000}) using the read-modify-write pattern, because the other bits of SHCSR report status (which handlers are active or pending) and must not be overwritten.
+At reset, these bits are heavily restricted (set to 0), meaning all faults instantly escalate to a \texttt{HardFault}. This gives you a single handler for every kind of error, making it impossible to tell \textit{what} specifically went wrong inside it. 
+
+The boot code must set bits 16--18 simultaneously with a bitwise OR (\texttt{|= 0x00070000}), ensuring each fault routes cleanly to its own dedicated handler. Because the other bits of SHCSR report critical system status (like which handlers are active or pending), you \textbf{must} use the read-modify-write pattern and never simply overwrite the whole register.
+
+\textbf{Where you write it:} Right after step 5. You implement the read-modify-write pattern: \texttt{ldr r0, =0xE000ED24}, then \texttt{ldr r1, [r0]} (read), \texttt{orr r1, r1, \#0x00070000} (modify), and finally \texttt{str r1, [r0]} (write). In gdb at \texttt{main}, checking \texttt{x/wx 0xE000ED24} will correctly display \texttt{0x00070000}.
+
+\subsection{Step 7: CCR, What Counts as a Fault}
+\textbf{CCR}, the Configuration and Control Register physically located at \texttt{0xE000ED14}, dictates whether certain suspicious CPU operations are classified as faults at all.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|l|l|}
+\hline
+\textbf{Bit} & \textbf{Name} & \textbf{Meaning} & \textbf{Here} \\ \hline
+3 & UNALIGN\_TRP & Trap unaligned word/halfword accesses & left off \\ \hline
+4 & DIV\_0\_TRP & Trap integer divide by 0 (as a UsageFault) & \textbf{set} \\ \hline
+9 & STKALIGN & 8-byte-align the stack on exception entry & already 1 \\ \hline
+\end{tabular}
+\end{table}
+
+Without the \texttt{DIV\_0\_TRP} bit set, an integer division by zero on the Cortex-M3 does not inherently trigger a fault: the hardware divide instruction silently returns \textbf{0}. The program would continue running with a mathematically incorrect value, and nobody would notice. Setting bit 4 transforms that silent, catastrophic bug into an immediate \texttt{UsageFault}. 
+
+Unaligned memory accesses, on the other hand, are strictly legal on the Cortex-M3 (though slightly slower). While trapping them can help identify sloppy pointer casts, it can also inadvertently break correct, optimized code produced by the C compiler or standard libraries. Therefore, it is intentionally left off. Bit 9 (\texttt{STKALIGN}) is already set to 1 at hardware reset, and the read-modify-write pattern safely preserves it.
+
+\textbf{Where you write it:} Right after step 6. The implementation requires the same four read-modify-write instructions: the address becomes \texttt{0xE000ED14} and the bitwise OR utilizes \texttt{\#(1 << 4)}. The C equivalent is \texttt{*(volatile uint32\_t *)0xE000ED14 |= (1u << 4);}. Here, read-modify-write is absolutely critical because bit 9 (\texttt{STKALIGN}) is already 1 and must remain 1. In gdb at \texttt{main}, checking \texttt{x/wx 0xE000ED14} will successfully show \texttt{0x00000210}.
+
+\subsection{Step 8: Exception Priorities}
+When two exceptions compete simultaneously, the more urgent one executes first. An urgent exception can even pre-empt and interrupt a handler that is already currently running for a less urgent one. 
+
+On the Cortex-M architecture, \textbf{a lower number means a more urgent priority}. Reset (-3), NMI (-2), and HardFault (-1) possess fixed, immutable priorities that are mathematically more urgent than anything a developer can configure. (This finally explains the lockup message encountered earlier: "current priority -1" means the CPU was already executing at the HardFault level, meaning there was physically nowhere higher left to escalate).
+
+Every other exception has a configurable priority, stored as a single byte in the \textbf{SHPR} (System Handler Priority Registers):
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|l|l|l|}
+\hline
+\textbf{Register} & \textbf{Byte 0} & \textbf{Byte 1} & \textbf{Byte 2} & \textbf{Byte 3} \\ \hline
+SHPR1 (\texttt{0xE000ED18}) & MemManage & BusFault & UsageFault & --- \\ \hline
+SHPR2 (\texttt{0xE000ED1C}) & --- & --- & --- & SVCall \\ \hline
+SHPR3 (\texttt{0xE000ED20}) & --- & --- & PendSV & SysTick \\ \hline
+\end{tabular}
+\end{table}
+
+Because each priority is strictly a byte of its own, the boot code writes it directly using a byte store instruction (\texttt{strb}). This entirely bypasses the need for the read-modify-write pattern:
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{C Equivalent} & \textbf{ARM Assembly} \\ \hline
+\texttt{uint8\_t *prio = (uint8\_t *)0xE000ED18;} & \texttt{ldr r0, =0xE000ED18} \\
+\texttt{movs r1, \#0x00} & \texttt{strb r1, [r0, \#1]} \\
+\texttt{prio[1] = 0x00; /* BusFault: urgent */} & \\ \hline
+\end{tabular}
+\end{table}
+
+The architectural choice made in \texttt{Reset\_Handler} is structured as follows: faults are the most urgent (\texttt{0x00}), SVCall sits in the middle (\texttt{0x80}), and PendSV alongside SysTick are the least urgent (\texttt{0xE0}). Real physical chips typically implement only the \textbf{upper} 3 or 4 bits of each priority byte (the lower bits always read as 0), so you must purposefully choose hexadecimal values that differ in their top bits, such as these.
+
+\textbf{Where you write it:} Right after step 7. Think of SHPR1, SHPR2, and SHPR3 collectively as a contiguous array of 12 bytes starting at address \texttt{0xE000ED18}. 
+\begin{itemize}
+    \item \texttt{prio[0]}, \texttt{prio[1]}, and \texttt{prio[2]} map to MemManage, BusFault, and UsageFault (set to \texttt{0x00}).
+    \item \texttt{prio[7]} maps to SVCall (SHPR2 byte 3, which is $4 + 3$; set to \texttt{0x80}).
+    \item \texttt{prio[10]} and \texttt{prio[11]} map to PendSV and SysTick (SHPR3 bytes 2 and 3; set to \texttt{0xE0}).
+\end{itemize}
+In assembly, you load the base address \texttt{0xE000ED18} into \texttt{r0} exactly once. Then, for each distinct value, you execute a \texttt{movs r1, \#value} followed by one \texttt{strb r1, [r0, \#index]} instruction per byte. In gdb at \texttt{main}, checking \texttt{x/3wx 0xE000ED18} will explicitly show \texttt{0x00000000 0x80000000 0xe0e00000}.
+
+\subsection{Step 9 and After: PRIMASK and Handing Over to C}
+The \texttt{cpsid i} and \texttt{cpsie i} instruction pair operates directly on \textbf{PRIMASK}, a special 1-bit register physically located inside the CPU core (it is not mapped in standard memory). When PRIMASK is set to 1, the CPU aggressively ignores every exception that has a configurable priority; only NMI and HardFault are allowed to pass through.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Instruction} & \textbf{PRIMASK State} & \textbf{C (vendor headers)} \\ \hline
+\texttt{cpsid i} & 1: masked & \texttt{\_\_disable\_irq()} \\ \hline
+\texttt{cpsie i} & 0: accepted & \texttt{\_\_enable\_irq()} \\ \hline
+\end{tabular}
+\end{table}
+
+PRIMASK defaults to \texttt{0} at reset. The boot code deliberately sets it at the very beginning (Step 1) and meticulously clears it just before calling \texttt{bl main}, ensuring that the vector table, handlers, and exception priorities are entirely configured before any interrupts are permitted. 
+
+Interrupts that arrive while the system is masked are not discarded or lost: the hardware registers them as \textbf{pending}, forcing them to wait, and immediately executes them as soon as PRIMASK is cleared. You can observe the PRIMASK state in gdb by typing \texttt{info registers primask}.
+
+After \texttt{cpsie i} comes the \texttt{bl main} instruction, seamlessly handing execution over to your C code. Following this, the assembly file implements a \texttt{hang} label with a \texttt{b hang} instruction. This is the architectural equivalent of an infinite \texttt{for (;;) \{\}} loop: on a bare-metal machine, if \texttt{main} ever inadvertently returns, there is physically nowhere to return to, so the CPU must spin safely forever.
+
+\textbf{Where you write it:} \texttt{cpsid i} is already present as Step 1. Step 9 is a single \texttt{cpsie i} instruction, inserted right after Step 8 and just before \texttt{bl main}. In gdb, inspecting \texttt{info registers primask} will correctly show \texttt{0} at reset, \texttt{1} after a single \texttt{stepi} (past \texttt{cpsid i}), and \texttt{0} again once execution reaches \texttt{main}.
+
+\subsection{Checking the Configuration from GDB}
+Once steps 4 through 9 are written, you can definitively prove that all hardware bits are correctly configured by the time \texttt{main} starts. With \texttt{make debug} running in your first terminal, execute the following in GDB:
+
+\begin{lstlisting}[language=bash]
+(gdb) target remote :1234
+(gdb) info registers primask    # 0 at reset; after stepping past cpsid i: 1
+(gdb) break main
+(gdb) continue
+(gdb) x/wx 0xE000ED08           # VTOR
+(gdb) x/wx 0xE000ED24           # SHCSR
+(gdb) x/wx 0xE000ED14           # CCR
+(gdb) x/3wx 0xE000ED18          # SHPR1..3
+\end{lstlisting}
+
+The expected memory values are precisely as follows:
+\begin{itemize}
+    \item \textbf{VTOR:} \texttt{0x00000000} (unchanged, meaning the table is actively at address 0).
+    \item \textbf{SHCSR:} \texttt{0x00070000}, which exactly corresponds to bits 16, 17, and 18 being active.
+    \item \textbf{CCR:} \texttt{0x00000210}, which is bit 4 (\texttt{0x10}, the division-by-zero trap you added) plus bit 9 (\texttt{0x200}, the stack alignment bit already set at reset).
+    \item \textbf{SHPR:} \texttt{0x00000000 0x80000000 0xe0e00000}.
+\end{itemize}
+
+\textbf{Reading the SHPR byte by byte:} Because the Cortex-M architecture is little-endian, byte 0 is the rightmost pair of hex digits.
+\begin{itemize}
+    \item \textbf{SHPR1} is all zeros (the three specific faults are set to the highest configurable priority).
+    \item \textbf{SHPR2} has \texttt{0x80} strictly in byte 3 (corresponding to SVCall).
+    \item \textbf{SHPR3} has \texttt{0xe0} strictly in bytes 2 and 3 (corresponding to PendSV and SysTick, the lowest priorities).
+\end{itemize}
+
+\subsection{Catching a Divide by Zero}
+The configuration performed in the \texttt{Reset\_Handler} is only useful if it successfully catches real errors in the code. To prove this, we can write custom fault handlers in C and intentionally trigger a fault.
+
+In \texttt{src/main.c} (right after \texttt{data\_message} and before \texttt{main}), you can write four functions utilizing the exact names defined in the vector table: \texttt{HardFault\_Handler}, \texttt{MemManage\_Handler}, \texttt{BusFault\_Handler}, and \texttt{UsageFault\_Handler}. Each function prints its own name using the same \texttt{semihost\_write0} function that \texttt{main} uses, and then enters an infinite loop:
+
+\begin{lstlisting}[language=c]
+void UsageFault_Handler(void)
+{
+    semihost_write0("UsageFault_Handler: a usage fault happened\n");
+    for (;;) { }
+}
+\end{lstlisting}
+
+Because these are normal (strong) C definitions, the linker uses them to silently replace the weak assembly defaults established in \texttt{boot/startup.s}. They loop forever because a fault represents a critical bug; there is no sensible way to continue execution safely.
+
+\subsubsection{Triggering the Fault}
+To test the handlers, we can force \texttt{main} to divide by zero. Crucially, the divisor must be a \texttt{volatile} variable holding \texttt{0}: without \texttt{volatile}, the compiler's optimizer will detect the constant division, compute or remove it entirely at compile time, and no physical divide instruction will ever be executed by the CPU.
+
+Using a preprocessor switch allows us to toggle the demo safely:
+\begin{lstlisting}[language=c]
+#define DEMO_DIVIDE_BY_ZERO 1
+
+/* Inside main() */
+#if DEMO_DIVIDE_BY_ZERO
+    volatile uint32_t numerator = 42;
+    volatile uint32_t zero = 0;
+    volatile uint32_t result = numerator / zero;
+    (void)result; /* Suppresses the 'unused variable' compiler warning */
+#endif
+\end{lstlisting}
+
+Running \texttt{make run} will successfully halt the program and print:
+\begin{lstlisting}[language=bash]
+UsageFault_Handler: a usage fault happened
+\end{lstlisting}
+
+\subsubsection{Validating the Configuration Steps}
+The two hardware configuration steps we added each play a distinct role, which can be verified by disabling them one at a time:
+\begin{itemize}
+    \item \textbf{Without Step 6 (SHCSR bits):} The specific usage fault is disabled. The hardware escalates the error, and you see \texttt{HardFault\_Handler: a hard fault happened}. The critical information regarding \textit{what} specific kind of fault occurred is permanently lost.
+    \item \textbf{Without Step 7 (DIV\_0\_TRP):} You see no fault message at all. The division silently returns \texttt{0}, and \texttt{main} continues executing its usual lines as if nothing happened. This is precisely the silent, catastrophic bug the trap was configured to catch.
+\end{itemize}
+
+\subsection{What Real Chips Add (\texttt{SystemInit})}
+The QEMU emulator's CPU is ready to run at full speed the moment it leaves reset. However, on a real physical microcontroller, the startup code usually must perform significantly more initialization before \texttt{main} is called. This is typically done in a vendor-supplied function called \texttt{SystemInit()}, which is called directly from \texttt{Reset\_Handler}. 
+
+Even though our emulator does not strictly require them, you should understand what a standard \texttt{SystemInit()} typically handles:
+\begin{itemize}
+    \item \textbf{Clock and PLL:} The chip naturally starts on a slow internal oscillator for stability. A Phase-Locked Loop (PLL) circuit must be configured to multiply that frequency up to the chip's maximum operational speed.
+    \item \textbf{Flash Wait States:} Physical Flash memory is fundamentally slower than a high-speed CPU. Before ramping up the clock frequency, the code must instruct the flash controller to insert extra "wait cycles" into each memory access; otherwise, the CPU would fetch invalid garbage data.
+    \item \textbf{Watchdog Timer:} A watchdog is a hardware timer that automatically resets the chip unless the software periodically "feeds" (resets) it. This acts as a physical safeguard against a program that hangs. On some chips, the watchdog is active immediately upon reset, so the boot code must either explicitly turn it off or begin feeding it.
+    \item \textbf{FPU (Floating-Point Unit):} On architectures like the Cortex-M4F, the FPU is disabled at reset to save power. It must be explicitly enabled via the \textbf{CPACR} register (\texttt{0xE000ED88}); otherwise, executing the very first \texttt{float} instruction will trigger a \texttt{UsageFault}.
+    \item \textbf{C++ Static Constructors:} If writing an OS or application in C++, the startup code must explicitly iterate through the \texttt{.init\_array} section and call all static object constructors before jumping to \texttt{main}.
+\end{itemize}
+
+\section{Life Without an Operating System}
+Your program now boots entirely on code you explicitly wrote. This unit examines what is \textit{not} there and the architectural consequences of those missing layers. It culminates with the program's final structural form: \texttt{main} intentionally relinquishing its privileges and then requesting privileged work back through a formal system call.
+
+\subsection{Hosted vs. Freestanding C Environments}
+The C standard strictly defines two distinct execution environments for any C program.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+ & \textbf{Hosted} & \textbf{Freestanding} \\ \hline
+\textbf{Example} & Your laptop program & Our Cortex-M3 image \\ \hline
+\textbf{Under your code} & A C library (\textbf{libc}) and an OS & Nothing \\ \hline
+\textbf{\texttt{printf}, \texttt{malloc}, \texttt{fopen}, \texttt{exit}} & Available & Not available \\ \hline
+\textbf{Who starts \texttt{main()}} & libc startup code, called by the OS & Whoever you decide \\ \hline
+\end{tabular}
+\end{table}
+
+On a standard laptop, writing \texttt{printf("hi\textbackslash{}n")} "just works" because two massive, complex layers sit directly beneath your program doing the heavy lifting: the C library and the Operating System. Our embedded image operates in a \textbf{freestanding} environment. Below your bare-metal code, there is absolutely nothing.
+
+\subsubsection{What is Available in Freestanding C?}
+A freestanding environment still provides a subset of standard headers. However, these are strictly headers that require \textbf{no code execution at run time}. They provide only data types, architectural constants, and macros that the compiler resolves entirely at build time.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Header} & \textbf{Provides} \\ \hline
+\texttt{<stdint.h>} & \texttt{uint32\_t}, \texttt{int8\_t}, ... \\ \hline
+\texttt{<stddef.h>} & \texttt{size\_t}, \texttt{NULL}, \texttt{offsetof} \\ \hline
+\texttt{<stdbool.h>} & \texttt{bool}, \texttt{true}, \texttt{false} \\ \hline
+\texttt{<stdarg.h>} & \texttt{va\_list}, for variadic functions \\ \hline
+\texttt{<limits.h>}, \texttt{<float.h>} & \texttt{INT\_MAX}, \texttt{FLT\_EPSILON}, ... \\ \hline
+\end{tabular}
+\end{table}
+
+This is precisely why \texttt{src/main.c} only includes \texttt{<stdint.h>}. There is no \texttt{<stdio.h>}, no \texttt{<stdlib.h>}, and no \texttt{<string.h>}: this means no printing, no dynamic allocation (\texttt{malloc}), no file I/O, no \texttt{exit}, and not even \texttt{memcpy}. Anything else required by the system, you must write yourself. (This lack of standard library support is the exact reason the assembly boot code had to manually copy the \texttt{.data} section with its own explicit loop rather than just calling a convenient \texttt{memcpy}).
+
+\subsection{What is Really Under \texttt{printf}}
+To understand why standard functions fail without an OS, it helps to dissect what \texttt{printf} actually does under the hood on a hosted system (like a laptop):
+
+\begin{lstlisting}[language=make]
+printf("x=%d\n", x)          your program
+   |  format the text into a buffer          ]   v                                         | libc
+write(1, buf, len)                           ]
+   |  system call: the CPU enters the kernel   ]
+   v                                           | OS kernel
+terminal / file / serial device driver         ]
+   |
+   v
+hardware (screen, UART, disk)
+\end{lstlisting}
+
+\texttt{printf} itself only performs \textbf{formatting}: it takes a format string like \texttt{"x=\%d\textbackslash{}n"} and the value of \texttt{x}, and parses them into a raw sequence of ASCII characters stored in a memory buffer. 
+
+However, getting those physical characters out of the machine to a screen is not \texttt{printf}'s job. To do that, it calls \texttt{write()}, which triggers a \textbf{system call}. A system call forces the CPU to enter the Operating System kernel. The kernel's specific device driver then takes over, physically sending the bytes to the terminal, a file, or a serial hardware device.
+
+\texttt{printf} is not the only C library feature that relies on hidden, lower-level OS hooks:
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{libc feature} & \textbf{What it needs underneath} \\ \hline
+\texttt{printf}, \texttt{puts} & \texttt{write()}: a way to send bytes to a physical device \\ \hline
+\texttt{malloc}, \texttt{free} & a heap memory region, dynamically grown via \texttt{sbrk()} \\ \hline
+\texttt{exit} & an OS process manager to return control to \\ \hline
+\texttt{main()} being called & startup code (\textbf{crt0}): sets up the stack, \texttt{.data}, \texttt{.bss}, then calls \texttt{main} \\ \hline
+\end{tabular}
+\end{table}
+
+C libraries designed for embedded systems (such as \textbf{newlib}) implement the high-level formatting logic and data structures, but they intentionally leave these bottom-level hardware functions as empty \textbf{hooks} (stubs) that the developer must manually implement for their specific physical board.
+
+\subsection{Why This Course Uses No libc At All}
+There are three fundamental reasons we deliberately avoid linking any C library at all:
+\begin{enumerate}
+    \item \textbf{No Underlying Kernel Hooks:} Without an OS beneath us, nothing implements those required hooks. There is no kernel, no \texttt{write()} function, and no heap manager; if we linked libc, we would have to write these complex low-level stubs first anyway just to satisfy the linker.
+    \item \textbf{Redundant Startup Logic:} The job of \texttt{crt0} (the standard libc startup code that prepares the C environment) is already perfectly handled by the custom \texttt{Reset\_Handler} we built in \texttt{boot/startup.s} (setting up the stack, copying \texttt{.data}, clearing \texttt{.bss}, and branching to \texttt{main}).
+    \item \textbf{Absolute Visibility:} The primary educational goal is to \textbf{see every single layer}. Every byte that executes on the board is code you can actively read in the repository. The final compiled image contains exclusively \texttt{boot/startup.s}, \texttt{src/main.c}, and occasionally a few necessary compiler helper routines. Absolutely nothing is hidden from the developer.
+\end{enumerate}
+
+\subsection{The Build Says It: The Flags in the \texttt{Makefile}}
+The \texttt{Makefile} explicitly enforces this freestanding setup using specific compilation and linking flags:
+
+\begin{lstlisting}[language=make]
+CFLAGS := -mthumb -mcpu=cortex-m3 -nostartfiles -ffreestanding -std=gnu17
+LDFLAGS += -nostdlib -lgcc
+\end{lstlisting}
+
+\begin{itemize}
+    \item \texttt{-ffreestanding}: This explicitly tells the compiler it is compiling for a freestanding environment. It must not assume that a C library or an OS exists (for example, it cannot assume that a function named \texttt{printf} behaves like the standard one).
+    \item \texttt{-nostartfiles}: This instructs the linker \textit{not} to link the toolchain's own default startup code (usually \texttt{crt0}). Our custom \texttt{boot/startup.s} takes its place.
+    \item \texttt{-nostdlib}: This goes even further, instructing the linker not to link \textbf{any} standard library or startup file (in particular, no \texttt{-lc} for libc).
+    \item \texttt{-lgcc}: This explicitly adds one specific library back: \textbf{libgcc}, which contains the compiler's own internal helper routines.
+\end{itemize}
+
+\subsubsection{Why Add \texttt{libgcc} Back?}
+Sometimes, the compiler translates a standard C mathematical operator into a \textbf{call} to an internal helper function because the target CPU physically lacks a single hardware instruction for it.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{C code} & \textbf{CPU} & \textbf{What GCC emits} \\ \hline
+\texttt{a / b} (32-bit) & Cortex-M0 (no divide instruction) & \texttt{bl \_\_aeabi\_idiv} \\ \hline
+\texttt{a / b} (32-bit) & Cortex-M3 & \texttt{sdiv} (a hardware instruction) \\ \hline
+\texttt{x / y} (64-bit) & Cortex-M3 & \texttt{bl \_\_aeabi\_uldivmod} \\ \hline
+\end{tabular}
+\end{table}
+
+These fallback helper routines live inside \texttt{libgcc}. Critically, they need no OS and no libc to function, so keeping them costs nothing. Dropping them would cause perfectly harmless, standard C code (such as a 64-bit division on an M3) to fail at the linking stage.
+
+\subsubsection{Try It: The \texttt{printf} Experiment}
+You can tangibly see what "no libc" means by directly asking for \texttt{printf}. If you add \texttt{\#include <stdio.h>} to \texttt{src/main.c} and insert a \texttt{printf("hi\textbackslash{}n");} at the start of \texttt{main}, the build will always fail:
+\begin{itemize}
+    \item With a bare toolchain (e.g., Homebrew's \texttt{arm-none-eabi-gcc}), the compiler fails immediately: \texttt{fatal error: stdio.h: No such file or directory}.
+    \item With a toolchain that ships \texttt{newlib}, the file compiles, but the linker (due to \texttt{-nostdlib}) halts with: \texttt{undefined reference to 'printf'}.
+\end{itemize}
+The conclusion is identical: nobody below your code provides \texttt{printf}.
+
+\subsection{Semihosting: How the Program Still Prints}
+If there is no libc and no physical UART driver, how did our bare-metal program successfully print lines to the laptop's terminal? It relies on a hardware debug mechanism called \textbf{semihosting}.
+
+Instead of driving real physical hardware, the embedded program asks the \textbf{host} (the computer running the emulator or the debugger) to perform the input/output operations on its behalf. It works through this precise sequence:
+\begin{enumerate}
+    \item The program places an operation code into \texttt{r0}. Here, it uses \texttt{0x04}, known as \texttt{SYS\_WRITE0}, meaning "print this string terminated by a zero byte". It places the memory address of the string into \texttt{r1}.
+    \item It executes \texttt{bkpt 0xab}: a software breakpoint instruction tagged with a special identifying number.
+    \item QEMU (or a physical hardware debugger) intercepts this breakpoint, halts the CPU, reads \texttt{r0} and \texttt{r1}, fetches the string directly from the target's RAM, and prints it \textbf{on your laptop's terminal}.
+    \item Once finished, the host commands the program to continue execution seamlessly after the \texttt{bkpt}.
+\end{enumerate}
+
+This mechanism \textit{requires} a debugger or emulator actively listening (which is why \texttt{make run} starts QEMU with the \texttt{-semihosting} flag). If flashed onto a standalone physical board with no debugger cable attached, the \texttt{bkpt} instruction would simply permanently halt the CPU.
+
+\subsubsection{Implementing Semihosting in C}
+The C implementation (found in \texttt{src/main.c}) uses Extended Inline Assembly to fulfill this hardware contract:
+
+\begin{lstlisting}[language=c]
+static void semihost_write0(const char *message)
+{
+    register uint32_t    r0 __asm__("r0") = 0x04;    /* SYS_WRITE0 */
+    register const char *r1 __asm__("r1") = message; /* string address */
+    __asm__ volatile ("bkpt 0xab" : : "r"(r0), "r"(r1) : "memory");
+}
+\end{lstlisting}
+
+\begin{itemize}
+    \item \textbf{Register Binding:} The \texttt{register ... \_\_asm\_\_("rX")} syntax is a GCC extension that forces the variables directly into the exact CPU registers (\texttt{r0} and \texttt{r1}) required by the semihosting convention. Standard C normally gives you no control over register allocation.
+    \item \textbf{The Instruction:} \texttt{\_\_asm\_\_ volatile} allows you to insert the raw \texttt{bkpt 0xab} assembly instruction, which has no C equivalent.
+    \item \textbf{Memory Barrier:} The \texttt{"memory"} clobber at the end warns the compiler that this instruction may interact with RAM (the string itself), actively preventing the optimizer from caching memory reads or delaying writes before this point.
+\end{itemize}
+
+\textbf{Inline Assembly Formatting Rule:} C naturally concatenates adjacent string literals (e.g., \texttt{"a" "b"} becomes \texttt{"ab"}). If you write multiple assembly instructions inside a single \texttt{\_\_asm\_\_} block on separate lines without an explicit newline character (\texttt{\textbackslash{}n}), the C compiler will run them together into one broken string (\texttt{ldr r2, [r0]ldr r3, [r1]}), causing the assembler to fail with \texttt{garbage following instruction}. You must explicitly separate instructions using \texttt{\textbackslash{}n} or \texttt{\textbackslash{}n\textbackslash{}t}.
+
+\subsection{Semihosting is a Trap}
+Look closely at what \texttt{bkpt 0xab} really does[cite: 78, 79]. The program \textbf{stops} doing its own work; control passes to \textbf{someone more powerful} (QEMU, outside the emulated CPU); that someone performs the job and \textbf{hands control back}[cite: 78, 79]. This is the exact same architectural shape as a system call on Linux: your program cannot drive the terminal itself, so it asks the kernel to do it, and the kernel returns control when the job is done[cite: 78, 79].
+
+That raises a natural question: can the Cortex-M3 itself be split into a powerful part and a restricted part, like the kernel mode and user mode you saw in week 1? It can[cite: 79].
+
+\subsection{Privileged and Unprivileged Code on Cortex-M}
+The Cortex-M3 implements the kernel/user mode concept directly in hardware, combined with the two CPU modes[cite: 79]:
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{CPU mode} & \textbf{When} & \textbf{Privilege} \\ \hline
+\textbf{Handler} mode & running an exception handler & always \textbf{privileged} \\ \hline
+\textbf{Thread} mode & normal code (\texttt{main}, ...) & privileged \textbf{or} unprivileged \\ \hline
+\end{tabular}
+\end{table}
+
+After reset, the CPU defaults to Thread mode and is \textbf{privileged}[cite: 80]. That is exactly how \texttt{Reset\_Handler} was able to freely write to VTOR, SHCSR, and CCR[cite: 80]. \textbf{Unprivileged} Thread mode is the equivalent of user mode: the restricted mode for code that a kernel would not trust[cite: 80].
+
+\subsubsection{The CONTROL Register}
+Which privilege level Thread mode uses is selected by the \textbf{CONTROL} register, a special register inside the CPU (like PRIMASK, it is not mapped in standard memory)[cite: 81]:
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Bit} & \textbf{Name} & \textbf{Meaning} \\ \hline
+0 & \textbf{nPRIV} & 0 = privileged, 1 = unprivileged (Thread mode only) \\ \hline
+1 & SPSEL & selects which stack pointer Thread mode uses (not used here) \\ \hline
+\end{tabular}
+\end{table}
+
+Because special registers are not reachable with standard \texttt{ldr} and \texttt{str} instructions, two dedicated instructions are used to read and write them[cite: 81]:
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Instruction} & \textbf{C equivalent} \\ \hline
+\texttt{mrs r0, control} & \texttt{r0 = CONTROL;} (read a special register) \\ \hline
+\texttt{msr control, r0} & \texttt{CONTROL = r0;} (write a special register) \\ \hline
+\end{tabular}
+\end{table}
+
+\subsection{Dropping Privilege: A One-Way Street}
+In \texttt{src/main.c}, after the first two lines are printed, the program intentionally drops its own privilege using a small block of inline assembly[cite: 81]:
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{ARM Assembly} & \textbf{C Equivalent} \\ \hline
+\texttt{mrs r0, control} & \texttt{CONTROL = CONTROL | 1;} \\
+\texttt{orr r0, r0, \#1} & \\
+\texttt{msr control, r0} & \\
+\texttt{isb} & \\ \hline
+\end{tabular}
+\end{table}
+
+This is a read-modify-write pattern, this time executed on a special register[cite: 81]. The last instruction, \texttt{isb} (Instruction Synchronization Barrier), is critical because modern CPUs fetch instructions ahead of time[cite: 81]. Some of the following instructions may have already been fetched under the old, privileged rules[cite: 81]. \texttt{isb} flushes the pipeline, throws those pre-fetched instructions away, and forces the CPU to fetch them again under the strictly enforced unprivileged rules[cite: 81].
+
+\textbf{The Privilege Trap:} This transition is a \textbf{one-way street}[cite: 81]. Writing to the CONTROL register is itself a privileged operation: if unprivileged code attempts to execute \texttt{msr control, r0} to clear nPRIV, the hardware simply \textbf{ignores} the write[cite: 81]. Code cannot maliciously promote itself back to privileged execution[cite: 81, 82]. There are only two ways back: a full hardware \textbf{reset}, or \textbf{an exception} (because exception handlers automatically run in Handler mode, which is unconditionally privileged)[cite: 82].
+
+\subsection{What Unprivileged Code Cannot Do (The Sandbox Constraints)}
+Once restricted, the CPU actively blocks critical operations to create a secure sandbox[cite: 83]:
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|p{0.5\linewidth}|l|}
+\hline
+\textbf{Attempt} & \textbf{Result} \\ \hline
+Read or write the \textbf{System Control Space} (\texttt{0xE000E000}...): SysTick, NVIC, SCB & \textbf{BusFault} \\ \hline
+\texttt{msr control, r0} (raise privilege back) & Ignored \\ \hline
+\texttt{cpsid i} / \texttt{cpsie i} (mask or unmask interrupts) & Ignored \\ \hline
+Semihosting \texttt{bkpt 0xab} & QEMU refuses it, so it faults \\ \hline
+\end{tabular}
+\end{table}
+
+\textit{(Note: The NVIC is the hardware block that manages device interrupts; it lives in the same restricted system area as the SCB)[cite: 83].}
+
+Ordinary RAM, flash memory, and standard code execution still work normally[cite: 83]. The restricted code simply cannot \textbf{reconfigure the machine}, and it cannot silence it by masking interrupts[cite: 83].
+
+\subsubsection{Try It: The HardFault Escalation}
+The semihosting restriction has a direct, observable consequence[cite: 83]. Right after the privilege-drop block in \texttt{main}, add a call to \texttt{semihost\_write0("main: unprivileged hello\textbackslash{}n");} and run \texttt{make run}[cite: 83]:
+
+\begin{lstlisting}[language=bash]
+main: privileged hello
+main: this text lives in .data
+HardFault_Handler: a hard fault happened
+\end{lstlisting}
+
+Your line never prints[cite: 84]. QEMU strictly refuses semihosting requests from unprivileged code[cite: 84]. The \texttt{bkpt} instruction is treated as a security violation and triggers a fault[cite: 84]. Since no dedicated fault handler covers this specific trap in the current setup, it escalates to \textbf{HardFault}[cite: 84]. 
+
+Notice that \texttt{HardFault\_Handler} \textit{can} print via semihosting, even though the code that caused the fault was unprivileged[cite: 84]. This is because handlers automatically run in Handler mode, regaining full privileges[cite: 84]. (Stop QEMU with \texttt{Ctrl-C} and remove the offending line).
+
+\subsubsection{Debugging the CONTROL Register}
+You can watch the \texttt{nPRIV} bit flip in the debugger[cite: 80]. With \texttt{make debug} in terminal 1, run the following in GDB:
+
+\begin{lstlisting}[language=bash]
+(gdb) target remote :1234
+(gdb) break main
+(gdb) continue
+(gdb) p/x $control        # 0x0: privileged
+\end{lstlisting}
+
+Then let the program run past the privilege drop (for example, by setting a breakpoint on \texttt{SVC\_Handler}---introduced in the next section---and continuing)[cite: 80]. Print \texttt{\$control} again: it is now \texttt{0x1}[cite: 80]. The \texttt{nPRIV} bit is set, and it securely stays set[cite: 80].
+
+\subsection{SVC: The Door That Stays Open}
+Unprivileged code is strictly blocked from touching the hardware, but it can still \textbf{ask} for tasks to be done on its behalf. The \texttt{svc \#n} ("supervisor call") instruction is deliberately allowed to execute within unprivileged code.
+
+When executed, it raises the \textbf{SVCall} exception (Exception 11), whose designated handler resides in slot 11 of the vector table: \texttt{SVC\_Handler}. As with any exception, the CPU immediately transitions into Handler mode, meaning the handler itself runs fully \textbf{privileged}. When the handler function returns, the CPU drops back into Thread mode to execute the instruction right after the \texttt{svc}, \textbf{still entirely unprivileged}.
+
+\begin{lstlisting}[language=make]
+ Thread mode, UNPRIVILEGED              Handler mode, PRIVILEGED
+ -------------------------              ------------------------
+ main:
+   ...
+   svc #0  ----- SVCall exception ----> SVC_Handler:
+                                          semihost_write0("...")
+                                          (can print, can touch
+                                           SysTick, NVIC, SCB)
+   next instruction <--- exception return --- return
+   ... (still unprivileged)
+\end{lstlisting}
+
+Hardware privilege is \textbf{borrowed} only for the strict duration of the handler, and only the specific code \textit{you} compiled into the handler runs with it. The unprivileged code does not get to choose what the handler runs; it can only knock on the door.
+
+The number \texttt{\#n} inside \texttt{svc \#n} is encoded directly into the machine instruction. Real OS kernels utilize this number (combined with arguments passed in registers) to determine \textit{which} specific system service is being requested. For our baseline proof of concept, there is only one service, so the program simply executes \texttt{svc \#0}.
+
+\subsection{This Is a System Call}
+Compare this bare-metal sequence directly with what happens on a standard desktop environment:
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+ & \textbf{Linux on your laptop} & \textbf{Our Cortex-M3} \\ \hline
+\textbf{Restricted code} & your program, in user mode & \texttt{main} after \texttt{nPRIV} = 1 \\ \hline
+\textbf{Trap instruction} & \texttt{syscall} (x86-64), \texttt{svc} (ARM) & \texttt{svc \#0} \\ \hline
+\textbf{Privileged side} & the kernel & \texttt{SVC\_Handler} \\ \hline
+\textbf{Service} & \texttt{write()} puts bytes on the terminal & print via semihosting \\ \hline
+\end{tabular}
+\end{table}
+
+The architectural mechanism remains identical at every scale: the restricted side cannot safely perform the job itself, so it intentionally traps into code that can, and that privileged code securely decides what to do. The \texttt{write()} system call located at the bottom of the libc \texttt{printf} stack on your laptop works exactly this way.
+
+\subsection{Adding the System Call}
+The final steps to turn this into working code happen in \texttt{src/main.c}.
+
+First, you must write the \texttt{SVC\_Handler}. It prints a message using \texttt{semihost\_write0} and then simply returns:
+
+\begin{lstlisting}[language=c]
+void SVC_Handler(void)
+{
+    semihost_write0("SVC_Handler: privileged code printing on behalf of unprivileged code\n");
+}
+\end{lstlisting}
+
+Unlike the hardware fault handlers you wrote earlier, it does \textit{not} loop forever: an \texttt{svc} trap is a deliberate request for service, not a bug. Falling off the end of the C function triggers a clean return from the exception, dropping privileges and jumping back to the instruction after \texttt{svc \#0}. Its name strongly overrides the weak default defined in \texttt{boot/startup.s}, just like the fault handlers did. 
+
+\textit{(Note: A standard C function can serve flawlessly as an exception handler because the Cortex-M hardware automatically saves and restores the registers a C function might modify upon exception entry and return).}
+
+Then, after the privilege drop in \texttt{main}, you insert the trap instruction using inline assembly:
+
+\begin{lstlisting}[language=c]
+__asm__ volatile ("svc #0" : : : "memory");
+\end{lstlisting}
+
+Executing \texttt{make run} now correctly prints the third line:
+\begin{lstlisting}[language=bash]
+SVC_Handler: privileged code printing on behalf of unprivileged code
+\end{lstlisting}
+
+\textit{Troubleshooting note:} If you forget to explicitly write the \texttt{SVC\_Handler} in C, the \texttt{svc} instruction seamlessly lands in the weak \texttt{Default\_Handler} defined in \texttt{boot/startup.s}, and the program hangs silently in its infinite loop (meaning the weak default successfully did its job).
+
+\subsection{Touching the Hardware Without Privilege}
+Finally, you must definitively verify that the unprivileged hardware protection is actively enforced. 
+
+After the \texttt{svc \#0} line, while \texttt{main} is still unprivileged, attempt to write \texttt{0} into the SysTick timer's control register (located at address \texttt{0xE000E010} in the restricted System Control Space):
+
+\begin{lstlisting}[language=c]
+volatile uint32_t *systick_ctrl = (volatile uint32_t *) 0xE000E010;
+*systick_ctrl = 0;
+\end{lstlisting}
+
+Running \texttt{make run} yields:
+\begin{lstlisting}[language=bash]
+SVC_Handler: privileged code printing on behalf of unprivileged code
+BusFault_Handler: a bus fault happened
+\end{lstlisting}
+
+The output proves that the \texttt{svc} successfully returned to unprivileged code. Then, the System Control Space hardware actively rejected the unprivileged store instruction, forcing the CPU to raise a \textbf{BusFault}. Because \texttt{Reset\_Handler} enabled bus faults earlier in the SHCSR, the fault routes directly to its own specific handler, and you immediately know exactly what kind of error occurred.
+
+\subsubsection{Conclusion: Privilege and CPU Modes}
+One final observation completes the picture. In gdb, put a breakpoint on \texttt{SVC\_Handler}, \texttt{continue} execution, and print \texttt{\$control} inside the handler: it is still \texttt{0x1}. 
+
+The handler is privileged \textit{not} because the \texttt{nPRIV} bit magically cleared itself, but because the CPU is currently running in \textbf{Handler mode}. Handler mode is architecturally designed to always be privileged, regardless of what the \texttt{CONTROL} register says.
 
 
+\section{Conclusion: The Final Result}
+With all the steps in place, the solution's \texttt{make run} prints the four lines you saw at the beginning of this chapter:
 
+\begin{lstlisting}[language=bash]
+main: privileged hello
+main: this text lives in .data
+SVC_Handler: privileged code printing on behalf of unprivileged code
+BusFault_Handler: a bus fault happened
+\end{lstlisting}
+
+Read them as a definitive summary of the week's architectural work:
+\begin{itemize}
+    \item The \textbf{first line} shows that \texttt{Reset\_Handler} successfully reached \texttt{main}, operating securely in privileged Thread mode.
+    \item The \textbf{second line} shows that the \texttt{.data} copy loop works: the linker's LMA/VMA memory split and your assembly boot code perfectly agree.
+    \item The \textbf{third line} shows that after intentionally dropping privilege, unprivileged code can still securely get privileged work done through \texttt{svc} and \texttt{SVC\_Handler}: establishing a true system call.
+    \item The \textbf{fourth line} shows that unprivileged code attempting to reconfigure the CPU is immediately stopped by a \texttt{BusFault}, which is then cleanly reported by its own dedicated handler thanks to the SHCSR configuration. 
+\end{itemize}
+
+\textit{Note: With \texttt{DEMO\_DIVIDE\_BY\_ZERO} in \texttt{src/main.c} set to 1, the same image instead prints \texttt{UsageFault\_Handler: a usage fault happened}, proving the CCR divide-by-zero trap actively works.}
+
+Your program now runs completely \textbf{freestanding}: there is no libc, no crt0, and no underlying OS (and the \texttt{Makefile} flags state this explicitly). It prints through semihosting, trapping into a more powerful host. Crucially, it implements---in just a few dozen lines of assembly and C---the core idea of every operating system's protection model: \textbf{restricted code cannot touch the machine directly, and must ask privileged code through a single, controlled door.}
+
+\section{Appendix: Where to Find the Code}
+The project directory (\texttt{week-02/}) holds two sibling folders: \texttt{base/} and \texttt{solution/}. Each has its own \texttt{Makefile} and builds completely independently. Unless a path in these notes is explicitly written with a \texttt{base/} prefix, files like \texttt{boot/startup.s}, \texttt{src/main.c}, \texttt{scripts/mps2\_m3.ld}, and \texttt{Makefile} are relative to \texttt{week-02/solution/}.
+
+\subsection{The Base Skeleton}
+The starting point of the in-class work is \texttt{week-02/base/}:
+\begin{itemize}
+    \item \texttt{base/boot/startup.s} holds only the minimal two-word vector table and a \texttt{Reset\_Handler} that blindly calls \texttt{main}.
+    \item \texttt{base/src/main.c} prints the string literal and \texttt{data\_message}.
+    \item The linker script and \texttt{Makefile} are identical to the solution.
+\end{itemize}
+
+\subsection{The Finished Result}
+The fully completed bootloader is in \texttt{week-02/solution/}:
+\begin{itemize}
+    \item \texttt{boot/startup.s} contains the full 16-entry vector table, the weak default handlers, and the completely manual \texttt{Reset\_Handler} (handling the interrupt mask, stack pointer, \texttt{copy\_data}, \texttt{zero\_bss}, VTOR, SHCSR, CCR, exception priorities, and finally \texttt{bl main}).
+    \item \texttt{src/main.c} contains \texttt{semihost\_write0}, the four strong fault handlers, the \texttt{SVC\_Handler}, and the \texttt{main} logic that drops privilege, calls \texttt{svc \#0}, and pokes the SysTick timer to test the sandbox.
+    \item \texttt{scripts/mps2\_m3.ld} and \texttt{Makefile} enforce the freestanding memory layout mapped in Units 1 and 3.
+\end{itemize}
+
+\textit{Final note: If these lecture notes and the codebase ever disagree, the C and Assembly code is always the absolute reference.}
 

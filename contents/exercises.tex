@@ -1,0 +1,481 @@
+\chapter{Exercises}
+
+\section{week-01-Lab}
+
+\subsection{Exercise A2: Construct the Makefile}
+The starter directory contains no \texttt{Makefile}. The goal of this exercise is to construct one from scratch. Instead of listing generic Make concepts, we will dissect the three most critical and bare-metal-specific mechanisms used in this configuration.
+
+\subsubsection{Deep Dive: LDFLAGS, the Map File, and QEMU}
+
+\paragraph{1. LDFLAGS and Their Importance}
+\texttt{LDFLAGS} governs the memory layout and the final link[cite: 17]. In a bare-metal environment, the linker cannot simply guess where to put things. We use these flags to sever all ties with the host OS and enforce our own rules:
+\begin{itemize}
+    \item \texttt{-T scripts/mps2\_m3.ld}: Tells the linker to use our custom script to map the physical Flash and RAM regions.
+    \item \texttt{-nostartfiles}: A crucial flag that prevents the toolchain's default C startup objects from taking control, forcing the CPU to use our custom \texttt{Reset\_Handler}[cite: 17].
+    \item \texttt{-nostdlib}: Completely strips out standard C libraries (no \texttt{printf}, no \texttt{malloc}).
+    \item \texttt{-lgcc}: Explicitly links back GCC's internal helper library, which provides low-level math routines (like 64-bit division) that the Cortex-M3 lacks in hardware.
+    \item \texttt{-Wl,-Map=...}: The \texttt{-Wl,} prefix passes the subsequent command directly to the underlying linker (\texttt{ld}), instructing it to generate the \texttt{output.map} file.
+\end{itemize}
+
+\paragraph{2. What the output.map File Actually Does}
+The map file is the definitive "receipt" of your compilation. It is an invaluable document that explains exactly where the linker physically placed every single input contribution and symbol in the hardware's memory[cite: 14]. If your program crashes, the \texttt{output.map} tells you exactly which function or variable lives at the physical address that caused the fault. For example, it proves that your vector table was placed exactly at Flash address zero, and your variables were mapped to SRAM[cite: 14].
+
+\paragraph{3. The QEMU Command and Its Parameters}
+Running a bare-metal image requires setting up a highly specific software emulator environment. Here is every parameter of the \texttt{run} command explained:
+\begin{itemize}
+    \item \texttt{qemu-system-arm}: The emulator executable for ARM architectures.
+    \item \texttt{-machine mps2-an385}: Tells QEMU which specific hardware board to emulate, ensuring the CPU and memory map exactly match our Cortex-M3 target[cite: 21].
+    \item \texttt{-kernel \$(BIN)}: Passes our generated ELF executable image to the emulator to be loaded into memory[cite: 21].
+    \item \texttt{-nographic}: Disables the graphical emulation window since we only need the terminal output[cite: 22].
+    \item \texttt{-monitor null -serial stdio}: Detaches QEMU's default internal monitor and routes the emulated serial port directly to the host's terminal. This specific routing is why hitting \texttt{Ctrl-C} successfully terminates the emulator, rather than being intercepted by QEMU's multiplexer.
+    \item \texttt{-semihosting} and \texttt{--semihosting-config enable=on,target=native}: Enables the semihosting interface. This allows QEMU to intercept our \texttt{bkpt 0xab} instructions and route the text payload directly to our laptop's console[cite: 22].
+\end{itemize}
+
+Here is the complete and correct \texttt{Makefile} solution for this project:
+
+\begin{lstlisting}[language=make]
+CC := arm-none-eabi-gcc
+BUILD := build
+BIN := $(BUILD)/scratch-os.axf
+
+# Compilation Flags
+CFLAGS := -mthumb -mcpu=cortex-m3 -nostartfiles -std=gnu17
+CFLAGS += -Wall -Wextra -O0 -g3
+
+# Linker Flags: script, memory map, and standard library removal
+LDFLAGS := -T scripts/mps2_m3.ld -nostdlib -nostartfiles -lgcc
+LDFLAGS += -Wl,-Map=$(BUILD)/output.map
+
+# Source files (C and Assembly)
+C_SOURCES   := src/main.c
+ASM_SOURCES := boot/startup.s
+
+# Automatic generation of object file paths (.o)
+C_OBJECTS   := $(C_SOURCES:%.c=$(BUILD)/%.o)
+ASM_OBJECTS := $(ASM_SOURCES:%.s=$(BUILD)/%.o)
+OBJECTS     := $(C_OBJECTS) $(ASM_OBJECTS)
+
+.PHONY: all clean run debug
+
+all: $(BIN)
+
+# Pattern rule to compile C files
+$(BUILD)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Pattern rule to compile ASM files
+$(BUILD)/%.o: %.s
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Rule to link everything into the final executable (.axf) and create the .map
+$(BIN): $(OBJECTS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJECTS) -o $(BIN)
+
+# Rule to start the emulator
+run: $(BIN)
+	qemu-system-arm -machine mps2-an385 -monitor null -semihosting \
+		--semihosting-config enable=on,target=native \
+		-kernel $(BIN) -serial stdio -nographic
+
+clean:
+	rm -rf $(BUILD)
+\end{lstlisting}
+
+\textbf{Checkpoint:} Running \texttt{make run} successfully prints \texttt{toolchain OK} from the newly constructed \texttt{Makefile}.
+
+
+\subsection{Exercise A3: Hosted Environment and Inline Assembly}
+Our main operating system is being built in a \textbf{freestanding} (bare-metal) environment. As established, this means there is no standard C library (\texttt{libc}) and no \texttt{printf} available to print to a console[cite: 9, 17]. 
+
+However, to develop and test our first assembly routine, this specific exercise is linked as a \textbf{hosted} program. This temporarily provides access to \texttt{libc} and \texttt{printf}, allowing us to print the variables and verify that our assembly code actually works before injecting it into the blind bare-metal firmware.
+
+\subsubsection{Deep Dive: Semihosting Initialization}
+When running the starter code, the program executes completely but prints absolutely nothing. This is not a crash. While the C library is present in this hosted build, its standard I/O file descriptors (\texttt{stdout}, \texttt{stdin}) are disconnected by default. When \texttt{printf} attempts to output text, the data is silently discarded.
+
+To fix this, we must explicitly instruct Newlib (the embedded C library) to connect its file handles to the QEMU semihosting interface. This is achieved by declaring and calling \texttt{initialise\_monitor\_handles()} at the very beginning of \texttt{main}. Once connected, QEMU can intercept the semihosting trap and write the requested string directly to the host console[cite: 21].
+
+\subsubsection{Deep Dive: Inline Assembly Mechanics}
+The exercise requires writing a function to swap two integers directly in ARM Assembly. This exposes several low-level mechanics:
+
+\begin{itemize}
+    \item \textbf{Load/Store Architecture:} ARM processors cannot directly manipulate values in RAM. You must load the values from memory into CPU registers (using \texttt{ldr}), manipulate them, and store them back (using \texttt{str}).
+    \item \textbf{Calling Convention:} When C calls our assembly function, it passes the arguments via registers. The pointer \texttt{a} arrives in \texttt{r0}, and the pointer \texttt{b} arrives in \texttt{r1}. We can use \texttt{r2} and \texttt{r3} as temporary scratch registers.
+    \item \textbf{The \texttt{naked} Attribute:} The GCC \texttt{\_\_attribute\_\_( ( naked ) )} directive strips away the standard C function prologue and epilogue. The compiler will not generate the hidden instructions that usually save and restore the stack. Because the epilogue is missing, we must manually return to the caller using the \texttt{bx lr} (Branch and eXchange to Link Register) instruction.
+    \item \textbf{Explicit Newlines (\texttt{\textbackslash{}n}):} C concatenates adjacent string literals at compile time (\texttt{"a" "b"} becomes \texttt{"ab"}). If we omit the \texttt{\textbackslash{}n} inside the \texttt{\_\_asm\_\_} block, the assembler receives a single, run-together line (e.g., \texttt{ldr r2,[r0]ldr r3,[r1]}) and throws a garbage error. The newline tells the assembler where one instruction ends and the next begins.
+    \item \textbf{Unused Parameter Warnings:} When compiling the assembly function, GCC warns that parameters \texttt{a} and \texttt{b} are unused. This is expected. The C compiler treats the inline assembly block as an opaque string. It does not parse the assembly to see that we are manually reading \texttt{r0} and \texttt{r1}, so it assumes the C variables were ignored.
+\end{itemize}
+
+\subsubsection{The Complete Implementation}
+Here is the completed \texttt{swap.c} file demonstrating both the C and Assembly implementations:
+
+\begin{lstlisting}[language=c]
+#include <stdio.h>
+
+/* Establish the file descriptors that stdio writes through for semihosting */
+extern void initialise_monitor_handles( void );
+
+/* Exchange the values *a and *b, in C. */
+void swap_c( int *a, int *b )
+{
+    int temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
+/* Exchange the values *a and *b, in ARM assembly. */
+__attribute__( ( naked ) ) void swap_asm( int *a, int *b )
+{
+    __asm__ volatile (
+        "ldr r2, [r0]\n"    /* r2 = *a (Load value from address r0) */
+        "ldr r3, [r1]\n"    /* r3 = *b (Load value from address r1) */
+        "str r3, [r0]\n"    /* *a = r3 (Store r3 into address r0) */
+        "str r2, [r1]\n"    /* *b = r2 (Store r2 into address r1) */
+        "bx  lr\n"          /* Return to caller */
+    );
+}
+
+int main( void )
+{
+    int x, y;
+
+    /* Initialize semihosting to make printf work */
+    initialise_monitor_handles();
+
+    x = 1; y = 2;
+    printf( "C   before: x=%d y=%d\n", x, y );
+    swap_c( &x, &y );
+    printf( "C   after:  x=%d y=%d\n", x, y );
+
+    x = 1; y = 2;
+    printf( "asm before: x=%d y=%d\n", x, y );
+    swap_asm( &x, &y );
+    printf( "asm after:  x=%d y=%d\n", x, y );
+
+    return 0;
+}
+\end{lstlisting}
+
+\textbf{Checkpoint:} Running \texttt{make run} successfully prints four lines to the terminal, proving that both the C and Assembly implementations successfully swap the values using the exact same underlying logic.
+
+\subsection{Exercise A4: Transfer to the Freestanding Image}
+The final step is to transfer our verified \texttt{swap\_asm} function from the hosted environment back into our bare-metal firmware image (\texttt{starter/src/main.c}). 
+
+If we blindly copy the assembly function, include \texttt{<stdio.h>}, and try to print the result using \texttt{printf} just like we did in Exercise A3, the build will abruptly fail. This failure is intentional and highly educational.
+
+\subsubsection{Deep Dive: Diagnosing the Linker Error}
+The compiler successfully translates the C code, but the build crashes during the \textbf{link} phase with the following error:
+\begin{lstlisting}[language=bash]
+src/main.c:129:(.text+0x6c): undefined reference to `printf'
+collect2: error: ld returned 1 exit status
+\end{lstlisting}
+
+Why does this happen? The two programs contain the exact same function, compiled for the same processor, by the same compiler, and executed by the same QEMU command. The critical difference lies entirely in \textbf{how they were linked}, which dictates their execution environment:
+\begin{itemize}
+    \item \textbf{Hosted Environment (Exercise A3):} Linked with \texttt{--specs=rdimon.specs}. This explicitly supplies Newlib's semihosting C library and its startup code.
+    \item \textbf{Freestanding Environment (Exercise A4):} Compiled with \texttt{-ffreestanding} and linked with \texttt{-nostartfiles -nostdlib}[cite: 9, 11]. Because of \texttt{-nostdlib}, no standard C library is searched at all, leaving \texttt{printf} with no definition to resolve to[cite: 9]. 
+\end{itemize}
+
+Even if we temporarily removed \texttt{-nostdlib} to force the linker to find \texttt{printf}, the link would still fail later on missing system call stubs like \texttt{\_write}, \texttt{\_read}, and \texttt{\_sbrk}. Our bare-metal \texttt{Reset\_Handler} simply sets up RAM and calls \texttt{main}[cite: 10]; it performs none of the complex run-time initializations that standard I/O strictly requires.
+
+\subsubsection{ISO C Standard: Hosted vs. Freestanding}
+The ISO C Standard (Section 4) formally names these two states:
+\begin{itemize}
+    \item \textbf{Hosted Implementation:} Provides the full standard library and relies on an underlying operating system for startup and system calls.
+    \item \textbf{Freestanding Implementation:} Provides no standard library[cite: 9]. The program must supply its own startup code and can only rely on a few hardware-agnostic headers (like \texttt{stdint.h})[cite: 9].
+\end{itemize}
+
+We can visually prove the massive overhead of a hosted environment by checking the file sizes. Running \texttt{arm-none-eabi-size} on both images will reveal that the hosted \texttt{swap.axf} is significantly larger than our custom, freestanding \texttt{scratch-os.axf}, purely because of the bloated \texttt{libc} baggage.
+
+\subsubsection{Empirical Proof: The Size Cost of \texttt{libc}}
+By running the size profiling tool on both executable images, we can visually prove the massive overhead of a hosted environment[cite: 17]:
+\begin{lstlisting}
+$ arm-none-eabi-size hosted/build/swap.axf
+   text    data     bss     dec     hex filename
+  45180    2328    5568   53076    cf54 swap.axf
+
+$ arm-none-eabi-size build/scratch-os.axf
+   text    data     bss     dec     hex filename
+    224       0    4096    4320    10e0 scratch-os.axf
+\end{lstlisting}
+
+The numbers speak for themselves. The hosted program occupies over 45,000 bytes of instruction memory (\texttt{text}). In stark contrast, our custom bare-metal OS occupies merely 224 bytes[cite: 17]. That massive difference is the precise "tax" of the standard C library (\texttt{libc}) and the \texttt{printf} machinery.
+
+\subsubsection{The Freestanding Workaround and Final Code}
+Because we cannot easily use \texttt{printf} to format dynamic strings in our freestanding OS, we must adapt our verification strategy. We use standard C logic to verify the swap internally, and then use our custom \texttt{semihost\_write0} function to print a hardcoded, NUL-terminated status string.
+
+\textit{Troubleshooting Note:} If the compiler throws an \texttt{implicit declaration of function 'swap\_asm'} error, it means the function was called inside \texttt{main} before the compiler ever saw its definition. In C, the function body (or its prototype) must be placed \textit{above} the \texttt{main} function to be recognized.
+
+Here is the complete, integrated \texttt{src/main.c} file for our freestanding OS:
+\begin{lstlisting}[language=c]
+#include <stdint.h>
+
+/* Emit a NUL-terminated string over the ARM semihosting debug channel. */
+static void semihost_write0( const char *message )
+{
+    register uint32_t r0 __asm__( "r0" ) = 0x04;
+    register const char *r1 __asm__( "r1" ) = message;
+    __asm__ volatile ( "bkpt 0xab" : : "r"( r0 ), "r"( r1 ) : "memory" );
+}
+
+/* Custom inline assembly routine to swap two values */
+__attribute__( ( naked ) ) void swap_asm( int *a, int *b )
+{
+    __asm__ volatile (
+        "ldr r2, [r0]\n"
+        "ldr r3, [r1]\n"
+        "str r3, [r0]\n"
+        "str r2, [r1]\n"
+        "bx  lr\n"
+    );
+}
+
+int main( void )
+{
+    semihost_write0( "toolchain OK\n" );
+
+    int x = 1 , y = 2 ;
+    swap_asm ( &x , &y ) ;
+
+    /* Verify logic: if they started as 1 and 2, they must now be 2 and 1 */
+    semihost_write0((x == 2 && y == 1) ? "swap OK\n" : "swap FAILED\n");
+
+    return 0;
+}
+\end{lstlisting}
+
+\textbf{Checkpoint:} Running \texttt{make run} successfully prints \texttt{toolchain OK} followed by \texttt{swap OK}, proving that our bare-metal system successfully executed custom ARM assembly without needing any underlying C library.
+
+
+\subsection{Exercise B1: Extending the Makefile and the Dependency Graph}
+\subsubsection{Extending Targets: \texttt{size} and \texttt{disasm}}
+To deeply analyze the compiled image, two new action targets are added to the Makefile. Because they execute analysis commands (\texttt{size} and \texttt{objdump}) rather than creating literal output files, they must be strictly appended to the \texttt{.PHONY} declaration.
+
+\begin{lstlisting}[language=make]
+.PHONY: all clean run debug size disasm
+
+size: $(BIN)
+	arm-none-eabi-size $(BIN)
+
+disasm: $(BIN)
+	arm-none-eabi-objdump -d $(BIN)
+\end{lstlisting}
+
+\subsubsection{Rebuild Behavior and Timestamp Dependencies}
+Make uses the last modified timestamp of files to decide whether a target requires rebuilding. Initial logic and parameters are validated through the following terminal observations:
+
+\begin{enumerate}
+    \item \textbf{Invoke \texttt{make} with nothing modified:} 
+    Make reports \texttt{Nothing to be done for 'all'}. The \texttt{.axf} target is already newer than all its registered prerequisites, so the build is skipped entirely.
+    
+    \item \textbf{\texttt{touch src/main.c} then \texttt{make}:} 
+    Make compiles only \texttt{build/src/main.o} and executes the link phase.
+    
+    \item \textbf{\texttt{touch boot/startup.c} then \texttt{make}:} 
+    Make compiles only \texttt{build/boot/startup.o} and executes the link phase. Standard processing applied: Make identifies that only one source file has changed, recompiles that specific file, and re-runs the linker.
+    
+    \item \textbf{\texttt{touch scripts/mps2\_m3.ld} then \texttt{make}:} 
+    Make falsely reports \texttt{Nothing to be done for 'all'} despite the updated timestamp.
+\end{enumerate}
+
+\textbf{The Linker Script Anomaly:} The final transformation skips rebuilding despite the linker script modification. This occurs because \texttt{mps2\_m3.ld} is an input argument passed via \texttt{LDFLAGS}, but it was never explicitly declared as a formal prerequisite in the dependency graph for \texttt{\$(BIN)}. Consequently, Make remains completely blind to its timestamp updates.
+
+\subsubsection{Understanding the Disassembly Output (\texttt{objdump})}
+Executing \texttt{arm-none-eabi-objdump -d} on the final ELF image. This tool reverse-engineers the raw machine code inside the \texttt{.text} section back into human-readable ARM Thumb assembly. 
+
+Unlike inspecting intermediate object (\texttt{.o}) files where memory addresses are left blank (unresolved), running \texttt{objdump} on the final linked \texttt{.axf} file provides the absolute truth of the physical memory layout. The output is structured in three columns:
+
+\begin{itemize}
+    \item \textbf{Physical Address (Left):} Shows the exact Flash memory address assigned by the linker. For example, \texttt{00000040 <semihost\_write0>} confirms that the code section correctly begins at \texttt{0x40}, immediately following the 64-byte hardware vector table.
+    \item \textbf{Machine Code (Middle):} The raw hexadecimal representation of the instruction (e.g., \texttt{b480}) that the CPU physically reads.
+    \item \textbf{Assembly Mnemonics (Right):} The human-readable instruction (e.g., \texttt{push \{r7\}}). 
+\end{itemize}
+
+This view is critical for bare-metal debugging. It allows developers to verify exactly how the C compiler translated high-level logic into low-level stack manipulations, branches (\texttt{bl}), and comparisons (\texttt{cmp}). Furthermore, inspecting the \texttt{00000058 <swap\_asm>} block proves that our custom inline assembly was injected into the firmware byte-for-byte exactly as we wrote it, with no compiler interference.
+
+\subsection{Exercise B2: Comparing Generated vs. Hand-Written Code}
+With both the C implementation (\texttt{swap\_c}) and the Assembly implementation (\texttt{swap\_asm}) functional, we can analyze how the C compiler translates high-level code into ARM instructions and compare it against our manual logic.
+
+\subsubsection{Unoptimized Translation (\texttt{-O0})}
+First, we compile the C implementation without optimizations (\texttt{-O0}) and examine the resulting object file (\texttt{build/swap-c.o}).
+
+Looking at the disassembly of our hand-written \texttt{swap\_asm}, it remains perfectly pristine, containing only the 5 instructions we provided:
+\begin{lstlisting}[language=make]
+00000028 <swap_asm>:
+  28:   6802            ldr     r2, [r0, #0]
+  2a:   680b            ldr     r3, [r1, #0]
+  2c:   6003            str     r3, [r0, #0]
+  2e:   600a            str     r2, [r1, #0]
+  30:   4770            bx      lr
+\end{lstlisting}
+
+However, the C compiler's unoptimized output for \texttt{swap\_c} generates 20 instructions to achieve the exact same logic:
+\begin{lstlisting}[language=make]
+00000000 <swap_c>:
+   0:   b480            push    {r7}
+   2:   b085            sub     sp, #20
+   4:   af00            add     r7, sp, #0
+   6:   6078            str     r0, [r7, #4]
+   8:   6039            str     r1, [r7, #0]
+        ... [Memory shuffling omitted] ...
+  24:   bc80            pop     {r7}
+  26:   4770            bx      lr
+\end{lstlisting}
+
+\textbf{Analysis of the Differences:}
+\begin{itemize}
+    \item \textbf{Prologue and Epilogue:} The generated \texttt{swap\_c} contains instructions like \texttt{push \{r7\}}, \texttt{sub sp, \#20}, and \texttt{pop \{r7\}}. These are standard C function prologues and epilogues that create a stack frame for local variables (like our \texttt{temp} variable).
+    \item \textbf{The Effect of \texttt{naked}:} These stack instructions are completely absent from \texttt{swap\_asm}. This proves that the \texttt{\_\_attribute\_\_( ( naked ) )} directive successfully prevented the compiler from wrapping our assembly in stack management code.
+    \item \textbf{Memory Overhead:} Because optimization is disabled (\texttt{-O0}), the compiler rigidly translates the C code by aggressively shuffling data between the CPU registers and the RAM stack, resulting in numerous redundant \texttt{ldr} and \texttt{str} instructions.
+\end{itemize}
+
+\subsubsection{Size-Optimized Translation (\texttt{-Os})}
+To see the compiler's true capability, we recompile the C file using the size optimization flag (\texttt{-Os}). 
+
+The generated code for \texttt{swap\_c} drastically changes:
+\begin{lstlisting}[language=make]
+00000000 <swap_c>:
+   0:   6803            ldr     r3, [r0, #0]
+   2:   680a            ldr     r2, [r1, #0]
+   4:   6002            str     r2, [r0, #0]
+   6:   600b            str     r3, [r1, #0]
+   8:   4770            bx      lr
+\end{lstlisting}
+
+\textbf{Conclusion:} Once optimized for size, the compiler recognizes that it can perform the swap entirely within the CPU scratch registers (\texttt{r2} and \texttt{r3}) without needing a local variable on the stack. The resulting C-generated machine code is now virtually identical to our hand-written \texttt{swap\_asm}. This confirms that while writing bare assembly offers absolute control, modern C compilers are exceptionally capable of generating hardware-optimal instructions when permitted.
+
+
+\subsection{Exercise B3: Extended Inline Assembly and the Clobber List}
+The \texttt{\_\_attribute\_\_((naked))} directive bypasses the compiler completely, which can be dangerous. A safer, more standard approach in C is to use \textbf{Extended Inline Assembly}. This allows us to write assembly logic while letting the C compiler automatically manage the stack, the function return, and the register allocation.
+
+\subsubsection{The Implementation}
+Instead of hardcoding physical registers (like \texttt{r0} or \texttt{r2}), we use symbolic placeholders (like \texttt{\%[t1]}). We then map these placeholders to C variables in the input and output sections.
+
+\begin{lstlisting}[language=c]
+static void swap_ext( int *a, int *b )
+{
+    int temp1, temp2;
+    __asm__ volatile (
+        "ldr %[t1], [%[pa]]\n"
+        "ldr %[t2], [%[pb]]\n"
+        "str %[t2], [%[pa]]\n"
+        "str %[t1], [%[pb]]\n"
+        
+        : [t1] "=&r" (temp1), [t2] "=&r" (temp2) /* Outputs */
+        : [pa] "r" (a),       [pb] "r" (b)       /* Inputs */
+        : "memory"                               /* Clobbers */
+    );
+}
+\end{lstlisting}
+
+\subsubsection{Why the Clobber List Needs "memory"}
+The clobber list (the third section after the colons) tells the compiler's optimizer which parts of the system our assembly code destroys or alters. 
+
+Including \texttt{"memory"} in the clobber list is strictly required here. It warns the compiler that our assembly block reads from and writes to arbitrary RAM addresses. Without this warning, the compiler might falsely assume that global variables in RAM remained untouched during the \texttt{\_\_asm\_\_} block. To optimize speed, it might reuse old, cached values from registers instead of fetching the newly swapped values from RAM, leading to catastrophic logical failures.
+
+Additionally, we \textbf{must not} include the \texttt{bx lr} instruction. Because this is a standard C function, the compiler automatically generates the prologue and epilogue. Forcing a manual return inside the assembly block would corrupt the stack and crash the processor.
+
+
+\subsection{Exercise B4: Memory Layout and Symbol Location}
+To guarantee our firmware complies with the Cortex-M3 physical constraints, we must verify the final memory layout. This is done by analyzing the output of \texttt{arm-none-eabi-nm -n} and cross-referencing it with the Linker's Map file (\texttt{build/output.map})[cite: 13, 14].
+
+\subsubsection{Symbol Mapping Verification}
+By parsing the generated evidence, we locate four critical symbols and confirm their placement within the hardware memory regions defined by \texttt{mps2\_m3.ld}:
+
+\begin{enumerate}
+    \item \textbf{\texttt{isr\_vector}} at address \textbf{\texttt{0x00000000}} (Region: \textbf{FLASH}).
+    This confirms the vector table is placed at the exact absolute zero address, satisfying the hardware boot requirement.
+    
+    \item \textbf{\texttt{main}} at address \textbf{\texttt{0x0000007c}} (Region: \textbf{FLASH}).
+    As part of the executable \texttt{.text} section, the application logic is permanently stored in read-only Flash memory.
+    
+    \item \textbf{\texttt{\_sdata}} at address \textbf{\texttt{0x20000000}} (Region: \textbf{RAM}).
+    This pointer marks the start of initialized global variables. As expected, it is mapped to the absolute beginning of the volatile SRAM.
+    
+    \item \textbf{\texttt{\_ebss}} at address \textbf{\texttt{0x20000000}} (Region: \textbf{RAM}).
+    This pointer marks the end of the zero-initialized data section. Because the current application has no global variables, the start of data and the end of BSS resolve to the exact same physical address.
+\end{enumerate}
+
+\subsubsection{Tool Preference: \texttt{nm} vs. \texttt{output.map}}
+Both tools provide address resolution, but they serve different diagnostic purposes[cite: 14]:
+\begin{itemize}
+    \item \textbf{\texttt{arm-none-eabi-nm -n}:} This tool is highly preferable for quick, direct lookups. The \texttt{-n} flag sorts the output numerically, instantly revealing the linear progression of symbols in memory without extraneous clutter.
+    \item \textbf{\texttt{output.map}:} The map file is essential for deep debugging. While verbose, it reveals the \textit{derivation} of the addresses, showing exactly which object file contributed a section and how linker mathematics (like \texttt{ALIGN}) calculated the final boundaries.
+\end{itemize}
+
+
+\subsection{Exercise B5: Provoking Link-Time Failures}
+In a bare-metal environment lacking a Memory Management Unit (MMU)[cite: 5, 8], there is no hardware isolation to protect running tasks from overwriting each other's memory[cite: 7]. The heap grows upwards, and the stack grows downwards from the very top of the RAM (\texttt{0x20400000})[cite: 8]. If they collide during execution, the system will silently corrupt data and crash[cite: 7].
+
+To prevent this runtime catastrophe, we enforce strict boundary checks at \textit{build time} directly within the linker script (\texttt{mps2\_m3.ld})[cite: 14].
+
+\subsubsection{Failure 1: Stack and Heap Collision}
+\textbf{Action:} We artificially increased \texttt{\_Min\_Stack\_Size} (e.g., to \texttt{0x00400000}) until the reserved stack mathematically overlapped with the heap region.
+
+\textbf{Diagnostic Observed:}
+\begin{lstlisting}[language=bash]
+ld: scripts/mps2_m3.ld:125: region RAM overflowed: heap collides with stack
+collect2: error: ld returned 1 exit status
+\end{lstlisting}
+
+\textbf{Mechanism:} This failure is triggered by the custom \texttt{ASSERT(\_\_StackLimit >= \_heap\_top, "...")} statement at the end of the linker script. The linker calculates the boundaries before generating the ELF image; seeing that the limits cross, it intentionally aborts the build and prints our custom string.
+
+\subsubsection{Failure 2: Flash Memory Overflow}
+\textbf{Action:} We reverted the stack size and instead reduced the \texttt{LENGTH} parameter of the \texttt{FLASH} memory region (e.g., from \texttt{0x00400000} down to \texttt{0x40}) so that the \texttt{.text} section could no longer fit.
+
+\textbf{Diagnostic Observed:}
+\begin{lstlisting}[language=bash]
+ld: build/scratch-os.axf section `.text' will not fit in region `FLASH'
+ld: region `FLASH' overflowed by 160 bytes
+collect2: error: ld returned 1 exit status
+\end{lstlisting}
+
+\textbf{Mechanism:} This failure is triggered natively by the linker. It mathematically checks the size of the compiled \texttt{.text} and \texttt{.rodata} sections against the strict physical bounds of the hardware mapped in the script[cite: 8, 14].
+
+\subsubsection{Statement of the Difference}
+While both are build-time failures protecting the firmware, their fundamental nature differs:
+\begin{itemize}
+    \item \textbf{The Flash Overflow is a physical, native constraint:} The compiled binary instructions are simply too large for the physical ROM chip defined in the hardware specifications. The GNU linker blocks this natively.
+    \item \textbf{The RAM Overflow is a logical, custom constraint:} The physical RAM chip is actually large enough to store the variable sections, but the \textit{dynamic runtime layout} predicted by the developer creates a severe software safety hazard. The linker only blocks this because we explicitly programmed it to do so via the \texttt{ASSERT} directive.
+\end{itemize}
+
+
+\subsection{Exercise B6: Recovering the Vector Table from the Image}
+The Hardware Vector Table is located at the absolute beginning of the memory (\texttt{0x00000000})[cite: 4]. By dumping the raw contents of the \texttt{.isr\_vector} section using \texttt{objdump -s}, we can empirically verify the exact "boot contract" the Cortex-M3 processor executes upon power-on.
+
+\subsubsection{1. The First Word: Initial Main Stack Pointer}
+The first four bytes represent the starting address of the stack[cite: 4]. Because ARM is little-endian, the raw bytes \texttt{00 00 40 20} are assembled by the CPU into the 32-bit word \texttt{0x20400000}.
+Cross-referencing this with our \texttt{nm} output confirms this exactly matches the \texttt{\_estack} symbol (the top of our 4 MiB SRAM).
+
+\subsubsection{2. The Second Word: The Reset Handler and the Thumb Bit}
+The second set of four bytes points to the first instruction to execute[cite: 4]. The raw bytes \texttt{d5 00 00 00} assemble into \texttt{0x000000d5}.
+However, checking \texttt{nm} reveals that \texttt{Reset\_Handler} is actually located at \texttt{0x000000d4}. 
+
+This difference of 1 is not a defect, but a strict architectural rule of the Cortex-M3[cite: 15]. The CPU executes exclusively in Thumb mode. Setting the lowest bit (LSB) of a function pointer to 1 is the hardware flag that explicitly commands the processor to execute the destination code in the Thumb-2 instruction state[cite: 15]. 
+
+\subsubsection{3. The Remainder of the Table: The Default Handler}
+Scanning the rest of the vector table reveals a recurring sequence of bytes (\texttt{cd 00 00 00}, resolving to \texttt{0x000000cd}). Removing the Thumb bit gives \texttt{0x000000cc}. 
+Consulting \texttt{nm}, this address strictly belongs to \texttt{Default\_Handler}. It recurs frequently because the startup code statically assigns this safe, infinite spin-loop to every single unimplemented hardware interrupt or exception, preventing the CPU from crashing into uninitialized memory if an unexpected fault occurs[cite: 10].
+
+\subsubsection{4. The Evidence-Based Boot Sequence}
+Based purely on the empirical evidence gathered from the ELF image, map file, and disassembly in this laboratory, the bare-metal boot sequence is as follows:
+\begin{enumerate}
+    \item \textbf{Power-On:} The CPU hardware automatically reads address \texttt{0x00000000} and sets its Stack Pointer to \texttt{0x20400000} (top of SRAM).
+    \item \textbf{Vector Fetch:} The CPU reads address \texttt{0x00000004}, finds \texttt{0x000000d5}, drops the Thumb bit, and forces the Program Counter to jump to \texttt{0x000000d4} (\texttt{Reset\_Handler}).
+    \item \textbf{Memory Initialization:} The disassembly of \texttt{Reset\_Handler} shows it copying data from Flash to RAM and zeroing out the \texttt{.bss} section using the boundaries (\texttt{\_sdata}, \texttt{\_ebss}) defined in the \texttt{output.map}.
+    \item \textbf{Transition to Application:} The final instruction of the \texttt{Reset\_Handler} disassembly is a branch with link (\texttt{bl <main>}), which transfers control to our C application to print the output via semihosting.
+\end{enumerate}
+
+
+
+
+
+
+
+
+
+
+
+
+

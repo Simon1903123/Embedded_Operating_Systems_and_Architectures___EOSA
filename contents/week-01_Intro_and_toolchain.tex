@@ -136,6 +136,17 @@ In later weeks, device drivers will interact with peripherals by reading/writing
     \item \textit{Note:} \texttt{volatile} does \textbf{not} provide atomicity or concurrency protection; it only ensures the access is physically executed by the CPU.
 \end{itemize}
 
+\paragraph{Practical Example of Compiler Optimization}
+Consider a loop waiting for a hardware button press, where the button's state is mapped to a specific memory address:
+\begin{lstlisting}[language=c]
+uint32_t *button_status = (uint32_t *) 0x40001000;
+while (*button_status == 0) {
+    /* Wait for hardware to change the value to 1 */
+}
+\end{lstlisting}
+Without \texttt{volatile}, the compiler's optimizer will assume that since the loop body never modifies \texttt{*button\_status}, its value will never change. To save time, the compiler will read the memory address \textit{only once} before the loop. If it is 0, it creates an inescapable infinite loop. The program will completely ignore the physical button press[cite: 8].
+
+By declaring it as \texttt{volatile uint32\_t *button\_status}, we force the compiler to physically fetch the value from the RAM address on \textit{every single iteration}, ensuring the hardware's real-time state is always captured[cite: 8].
 
 
 
@@ -455,8 +466,7 @@ $(BUILD_DIR)/%.o: %.c
 \subsubsection{Pattern Rules and Substitution References}
 A \textbf{pattern rule} (\texttt{\%.o: \%.c}) uses a stem \texttt{\%} that matches on both sides of the colon. Given a request to build an object file, Make matches it automatically without needing one explicit rule per file[cite: 19]. 
 
-Additionally, a \textbf{substitution reference} like \texttt{\detokenize{\$(SOURCES:\%.c=\$(BUILD_DIR)/\%.o)}} acts as a shorthand to convert the source list into the corresponding object file list.
-
+Additionally, a \textbf{substitution reference} like \texttt{\detokenize{\$(SOURCES:\%.c=\$(BUILD_DIR)/\%.o)}} acts as a shorthand to convert the source list into the corresponding object file list[cite: 19].
 \subsubsection{Phony Targets}
 Actions like \texttt{run} and \texttt{clean} do not name actual files that Make should create[cite: 19]. Using \textbf{\texttt{.PHONY}} tells Make that a target is not a file, ensuring its recipe always runs when requested and preventing conflicts if a file with the same name exists[cite: 19]. \texttt{all} is the conventional default goal[cite: 19].
 
