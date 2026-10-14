@@ -307,7 +307,6 @@ LDFLAGS += -Xlinker -Map=build/output.map
 
 \begin{itemize}
     \item \textbf{The Linker Script (\texttt{-T}):} The first option chooses the course linker script (\texttt{scripts/mps2\_m3.ld})[cite: 14]. The script begins by declaring the \texttt{FLASH} and \texttt{RAM} regions, then specifies the output sections that occupy them. Its internal syntax defines how it places the vector table so the processor finds it at reset, how it splits an initialized global's storage between a Flash load address and a RAM run address, and how it reserves the heap and stack. While writing this script from scratch is a Week 2 topic, for now, it is provided as-is to make the build work.
-    
     \item \textbf{The Map File (\texttt{-Map}):} The second option emits a map file (\texttt{build/output.map})[cite: 14]. This file is an invaluable explanation of exactly where the linker placed each input contribution and symbol[cite: 14]. 
 \end{itemize}
 
@@ -588,3 +587,55 @@ When faults occur during development, follow a systematic troubleshooting path:
 
 \subsection{Foundational Significance}
 This checkpoint serves as the permanent foundation for all subsequent work: future peripherals will use the same physical-address model, task code will still enter through the same reset path, and every future image will be linked, inspected, and booted through this exact toolchain. Week 1 makes these relationships explicit before later operating system abstractions obscure them.
+
+\section{A prova di coglione}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-01.png}
+    \caption{Schema concettuale: week-01}
+\end{figure}
+
+\textbf{Il processo di Build e Boot per un microcontrollore ARM Cortex-M3 (MPS2)}
+
+L'avvio di un sistema "bare-metal" su microcontrollore richiede un processo suddiviso in due macro-fasi distinte: la creazione dell'eseguibile (Build) e la sua effettiva esecuzione (Boot).
+
+\begin{enumerate}
+
+    \item \textbf{Fase di Build (Generazione del firmware sull'HOST)}
+    Questa prima fase viene eseguita interamente sul sistema Host. Avendo a disposizione abbondante memoria e potenza di calcolo, possiamo utilizzare strumenti avanzati e librerie in C per scrivere il codice sorgente, che verrà poi tradotto nelle specifiche istruzioni macchina (istruzioni "Thumb") comprese dal processore.
+    \vspace{0.3cm}
+    Il processo parte dalla stesura di due file fondamentali:
+    \begin{itemize}
+        \item \textbf{main.c}: Contiene la logica dell'applicazione vera e propria, ovvero le istruzioni che il sistema dovrà eseguire una volta completato l'avvio. Serve a definire l'indirizzo della prima istruzione di partenza del programma dell'utente.
+        \item \textbf{startup.s (o in C)}: È il file responsabile della fase di boot iniziale. Viene utilizzato per dichiarare, preparare e inizializzare le variabili e le strutture dati essenziali prima che il sistema passi il controllo al codice del main.
+    \end{itemize}
+
+    Entrambi questi file sorgenti vengono passati al compilatore, che li trasforma in file oggetto (.o). Questi sono file binari che contengono le istruzioni tradotte, ma le cui posizioni in memoria non sono ancora state definite.
+    \vspace{0.3cm}
+    A questo punto entra in gioco il Linker Script (.ld). Questo file testuale rappresenta la mappatura fisica dell'intera memoria del microcontrollore. Detta le regole precise su dove deve essere scritta ogni singola sezione: ad esempio, impone che i vettori di interruzione (isr\_vector) si trovino esattamente all'indirizzo 0x00, che il codice eseguibile (.text) parta da un indirizzo successivo (es. 0x20), e così via per i dati in RAM.
+    \vspace{0.3cm}
+    Durante la fase conclusiva, chiamata fase di Linker, il sistema prende le varie dichiarazioni contenute nei file .o e assegna a ciascuna di esse gli indirizzi di memoria corretti dettati dal file .ld.
+    Da questa operazione finale si ottengono due file:
+
+    \begin{itemize}
+        \item \textbf{Il file .axf}: È il firmware eseguibile vero e proprio, un unico blocco contenente tutte le istruzioni Thumb e i relativi indirizzi definitivi. Questo è il file che verrà "iniettato" direttamente nel microprocessore.
+        \item \textbf{Il file .map}: Un documento testuale generato per comodità dello sviluppatore. Mostra la mappa esatta di dove tutte le dichiarazioni dei file .o sono state materialmente inserite all'interno della memoria.
+    \end{itemize}
+
+
+
+    \item \textbf{Fase di Boot (Esecuzione sul Microcontrollore)}
+    Una volta generato il firmware (.axf), l'Host ha concluso il suo lavoro. Il file viene caricato nella memoria del sistema Target.
+
+    Schiacciando virtualmente il pulsante "ON" della scheda (eseguendo il comando di emulazione qemu-system-arm ...), l'ambiente di esecuzione cambia radicalmente: non ci troviamo più sul sistema Host, ma operiamo direttamente e unicamente sul microcontrollore.
+    In questa fase di accensione (Boot), il microcontrollore si comporterà come un esecutore passivo: andrà a leggere la memoria a partire dal primissimo indirizzo ed eseguirà unicamente le istruzioni Thumb che abbiamo precedentemente preparato nel file .axf, avviando così prima il sistema e successivamente il nostro programma.
+
+\end{enumerate}
+
+
+
+
+
+
+
