@@ -54,7 +54,6 @@ The first two lines come from the privileged kernel. Everything after them comes
 Unless a path in these notes says otherwise, file paths are relative to \texttt{week-03/solution/}. The code is fully commented there, line by line, so you can always compare what you typed with the reference. A practical note: QEMU runs with its serial port on the terminal (\texttt{-serial stdio}, monitor disabled), so you stop it with \texttt{Ctrl-C}.
 
 \section{Unit 1: Devices and a Polled Driver}
-\label{sec:unit1}
 
 \subsection{CMSDK and CMSIS: Hardware versus Software}
 In the ARM ecosystem, it is important to distinguish between two similarly named standards:
@@ -94,7 +93,6 @@ A bus is the physical set of wires carrying load and store operations between th
 An \textbf{AHB-to-APB bridge} connects the two, translating fast AHB accesses into APB accesses. From a software perspective, this routing is transparent: a register is simply a memory address. However, accessing an APB register incurs a slight performance penalty (a few extra cycles) due to bridge latency.
 
 \subsection{The Board's Interrupt Lines}
-\label{sec:irq-lines}
 Peripherals notify the CPU of critical events (e.g., a byte arriving, or a timer reaching zero) by asserting a physical \textbf{Interrupt Request (IRQ)} line. In the Cortex-M architecture, device IRQ line $n$ is serviced by vector table slot $16 + n$.
 
 The primary interrupt map for the AN385 board is as follows:
@@ -106,7 +104,6 @@ The primary interrupt map for the AN385 board is as follows:
 The Watchdog timer bypasses standard IRQ lines and directly raises a \textbf{Non-Maskable Interrupt (NMI)} at vector slot 2. For the initial implementation phase, interrupts will remain disabled, and the CPU will rely only on \textbf{polling} (asking the devices in a loop whether they are ready).
 
 \subsection{Software Organization: \texttt{include/cmsdk.h}}
-\label{sec:cmsdk-header}
 To interact with the hardware, the provided \texttt{include/cmsdk.h} file describes each device as a C \texttt{struct} \textbf{laid over its registers}. The first field maps to the device's base address, and each subsequent \texttt{uint32\_t} field sits exactly 4 bytes after the previous one. 
 
 For example, the serial port is defined as \texttt{CMSDK\_UART\_TypeDef}:
@@ -134,17 +131,18 @@ To ensure architectural safety:
 This single header provides the structured mappings for the SysTick, NVIC, SCB (System Control Block), timers, watchdog, GPIO, and FPGAIO.
 
 \subsection{The Board's Memory Map from QEMU}
-\label{sec:qemu-memmap}
-Instead of relying on the documentation alone, we can ask QEMU to list the devices it models. QEMU features a \textbf{monitor} console to control the emulator itself. By launching QEMU paused (\texttt{-S}) with the monitor enabled:
-\begin{lstlisting}[language=bash]
-qemu-system-arm -M mps2-an385 -display none -S -monitor stdio -serial null
-\end{lstlisting}
-We can issue the command \texttt{info mtree -f} to print every address range and the component answering there. Because the output is massive, a compact one-liner can filter for the \texttt{0x400xxxxx} peripheral region:
-\begin{lstlisting}[language=bash]
-printf 'info mtree -f\nquit\n' | qemu-system-arm -M mps2-an385 -display none -S -monitor stdio -serial null | grep ' 00000000400' | sort -u
+Instead of relying solely on documentation, we can ask QEMU directly which hardware components it actually models. QEMU features a \textbf{monitor} console to control the emulator. 
+
+The most efficient way to extract the hardware layout is by launching QEMU paused (\texttt{-S}) with the monitor enabled, passing the \texttt{info mtree -f} command, and filtering the massive output for the \texttt{0x400xxxxx} peripheral memory region. 
+
+We can do this in a single terminal command:
+\begin{lstlisting}
+printf 'info mtree -f\nquit\n' | qemu-system-arm -M mps2-an385 \
+    -display none -S -monitor stdio -serial null \
+    | grep ' 00000000400' | sort -u
 \end{lstlisting}
 
-This reveals the active memory map:
+This reveals the active memory map for the board's peripherals:
 \begin{verbatim}
 0000000040000000-0000000040000fff (prio 0, i/o): cmsdk-apb-timer
 0000000040002000-0000000040002fff (prio 0, i/o): cmsdk-apb-dualtimer
@@ -157,39 +155,50 @@ This reveals the active memory map:
 \end{verbatim}
 
 \subsubsection{Interpreting the Output: Real Models vs. Placeholders}
-The \texttt{prio} field dictates how QEMU handles the memory range:
+The \texttt{prio} field in the output tells us exactly how QEMU handles each memory range:
 \begin{itemize}
-    \item \textbf{\texttt{prio 0} (Real Models):} Devices like \texttt{uart}, \texttt{cmsdk-apb-timer}, and \texttt{mps2-fpgaio} are fully emulated. QEMU models five UARTs total; \texttt{UART0} at \texttt{0x40004000} is the one actively connected to your terminal via the \texttt{-serial stdio} flag. Two additional serial interfaces appear here: \texttt{pl022} (SPI) and \texttt{arm\_sbcon\_i2c} (I2C).
-    \item \textbf{\texttt{prio -1000} (Placeholders):} Devices like \texttt{cmsdk-ahb-gpio} are ``unimplemented devices''. The emulator accepts memory accesses to these addresses without throwing a fault, but it silently ignores all writes and returns 0 on all reads.
+    \item \textbf{\texttt{prio 0} (Fully Emulated):} Devices like \texttt{uart} and \texttt{mps2-fpgaio} are real models. For instance, \texttt{UART0} at \texttt{0x40004000} is fully functional and connected to your terminal via the \texttt{-serial stdio} flag.
+    \item \textbf{\texttt{prio -1000} (Placeholders):} Devices like \texttt{cmsdk-ahb-gpio} are ``unimplemented''. To prevent software crashes, QEMU safely accepts memory accesses here: it silently ignores all writes and returns \texttt{0} on all reads, but the hardware itself does not function.
 \end{itemize}
 
-\subsubsection{Touching a Device That Is Not There}
-\label{sec:qemu-unimp}
-QEMU can log every time the software attempts to access an unimplemented placeholder device by using the \texttt{-d unimp} flag (which is integrated into the project's \texttt{make run-trace} command). 
+\subsubsection{Debugging Accesses to Unimplemented Hardware}
+If your code isn't working as expected, you might be writing to a placeholder or a non-existent device. You can track this by monitoring QEMU's behavior while manually poking the system bus with GDB.
 
-If you build the project, pause the emulator at reset (\texttt{-S}), and attach GDB, you can manually poke the system bus:
+To see this in action, you need two terminal windows:
+\begin{itemize}
+    \item \textbf{Terminal 1 (QEMU):} Launch the emulator paused, with the debugger port open and unimplemented device logging enabled (\texttt{-d unimp}).
+    \item \textbf{Terminal 2 (GDB):} Launch \texttt{arm-none-eabi-gdb}, connect to QEMU (\texttt{target remote :1234}), and issue memory writes.
+\end{itemize}
+
+Once connected, try writing to a placeholder device (like GPIO) and then reading the value back:
 \begin{lstlisting}[language=bash]
-(gdb) set {unsigned int}0x40010010 = 1      # GPIO0 OUTENABLESET
-(gdb) x/wx 0x40010010
-(gdb) set {unsigned int}0x40028000 = 3      # FPGAIO LED register
-(gdb) x/wx 0x40028000
+(gdb) set {unsigned int}0x40010010 = 1      # 1. Write to GPIO0 (Placeholder)
+(gdb) x/wx 0x40010010                       # 2. Read it back
 \end{lstlisting}
 
-In the QEMU terminal, the GPIO operations (which target a placeholder) trigger warning logs, while the read returns \texttt{0}:
+Because GPIO is not implemented, GDB will show the value is \texttt{0}. If you look at \textbf{Terminal 1}, QEMU explicitly warns you about the ignored access:
 \begin{verbatim}
 cmsdk-ahb-gpio: unimplemented device write (size 4, offset 0x010, value 0x00000001)
 cmsdk-ahb-gpio: unimplemented device read  (size 4, offset 0x010)
 \end{verbatim}
-Conversely, the FPGAIO register (a real model) accepts the write, retains the value \texttt{0x00000003}, and logs nothing. 
 
-In summary, a peripheral access in the emulator can conclude in three ways, none of which triggers a hardware fault, allowing the software to silently carry on:
-\begin{itemize}
-    \item \textbf{Real Model} (e.g., UART0, SysTick): The device functions normally; nothing is logged by \texttt{-d unimp}.
-    \item \textbf{Placeholder for a Device} (e.g., GPIO0): The access is safely ignored or zeroed; QEMU logs the specific device name (\texttt{cmsdk-ahb-gpio}).
-    \item \textbf{No Device At All} (e.g., \texttt{0x40080000}): The access is ignored; QEMU logs a generic region-wide placeholder name such as \texttt{RESERVED 4}.
-\end{itemize}
+Conversely, if you write to a real, fully emulated device like the FPGAIO register:
+\begin{lstlisting}[language=bash]
+(gdb) set {unsigned int}0x40028000 = 3      # 1. Write to FPGAIO (Real Model)
+(gdb) x/wx 0x40028000                       # 2. Read it back
+\end{lstlisting}
 
-If your code appears to do nothing, \texttt{make run-trace} can reveal whether the software is writing to a non-existent device. Note also the distinction between \textbf{core peripherals} (like SysTick and the NVIC, which the ARMv7-M architecture guarantees will exist on every Cortex-M) and \textbf{board peripherals} (like UART and GPIO, whose presence and placement depend on the board designer and emulator configuration).
+GDB will confirm the value \texttt{0x00000003} was successfully retained, and QEMU will remain completely silent.
+
+\vspace{0.5cm}
+\textbf{Summary of Hardware Access Behaviors in QEMU:}
+When your software accesses a peripheral memory address, QEMU resolves it in one of three ways (none of which cause a hardware fault):
+\begin{enumerate}
+    \item \textbf{Real Model} (e.g., UART0): Works normally. The data is saved, and no warnings are logged.
+    \item \textbf{Device Placeholder} (e.g., GPIO0): Ignored/Zeroed. QEMU logs the specific device name (e.g., \texttt{cmsdk-ahb-gpio}) if \texttt{-d unimp} is active.
+    \item \textbf{Empty Address} (e.g., 0x40080000): Ignored/Zeroed. QEMU logs a generic region warning (e.g., \texttt{RESERVED 4}) if \texttt{-d unimp} is active.
+\end{enumerate}
+\textit{Note: Always distinguish between core CPU peripherals (like SysTick, guaranteed by the ARMv7-M architecture) and board-specific peripherals (like UART/GPIO, which depend on the exact emulator model).}
 
 \subsection{The General I/O Landscape}
 While this course focuses primarily on driving the UART, a modern microcontroller interacts with the outside world through a variety of standardized hardware interfaces:
@@ -212,13 +221,11 @@ While this course focuses primarily on driving the UART, a modern microcontrolle
 Complex interfaces like SPI and I2C are programmed using the same memory-mapped register concepts that we will apply to the UART, simply requiring more state-machine steps per transfer.
 
 \subsection{DMA: Moving Data Without the CPU}
-\label{sec:dma}
 In all the code of this week, the CPU moves every byte itself: it reads a register, stores the value in memory, and repeats. For a large transfer, such as a flash sector or an audio buffer, the CPU is busy for the whole time.
 
 A \textbf{DMA controller} (Direct Memory Access) is a device that copies data by itself. You program a source address, a destination address and a count, and start it. The DMA controller then uses the bus while the CPU runs other code, and signals the CPU when it is done, usually with an interrupt. Typical uses are peripheral to memory (bytes received by a UART, samples from an ADC) and memory to peripheral (data to send on SPI). The cost is that the CPU and the DMA controller share the bus, and the software must not touch a buffer while the DMA controller is still filling it. QEMU's AN385 has no DMA controller, which is why the CPU moves every byte here.
 
 \subsection{Memory-Mapped I/O: Loads and Stores with Side Effects}
-\label{sec:mmio}
 Every peripheral register has a fixed address, and you talk to a device with ordinary load and store instructions at that address. This is called \textbf{memory-mapped I/O} (MMIO). Written without the \texttt{struct}, sending a byte looks like this:
 
 \begin{lstlisting}[language=C]
@@ -237,7 +244,6 @@ UART0_DATA = 'A';      /* a store to 0x40004000: the UART sends 'A' */
 The device's manual says what each read and each write does, and your code must follow it exactly.
 
 \subsection{The \texttt{volatile} Keyword}
-\label{sec:volatile}
 The compiler assumes that it is working with ordinary memory, where a value changes only when \textbf{your program} stores to it. With optimization turned on, it keeps values in CPU registers and removes reads it believes are repeated. Consider the loop that waits for the UART to have room:
 
 \begin{lstlisting}[language=C]
@@ -303,93 +309,116 @@ In \texttt{vol.o} the loop goes back to the \texttt{ldr} and reads \texttt{STATE
 \end{verbatim}
 
 At \texttt{-O0}, the level this course's \texttt{Makefile} uses, even the plain version happens to re-read the register, so the bug stays hidden until someone turns optimization on. The rule is simple: always access device registers through \texttt{volatile}.
-\section{Read-Modify-Write Needs Care}
-When configuring a device, you often need to change a single bit while leaving the rest of the register intact. In C, this is commonly written using combined assignment operators, like the bitwise OR assignment:
 
-\begin{lstlisting}[language=C]
-CMSDK_GPIO0->DATAOUT |= (1u << 3); /* set pin 3: read, OR the bit, write back */
-\end{lstlisting}
+\section{Panoramica del Sistema: Architettura Interna e Comunicazione}
 
-While this looks like a single line of C code, at the hardware level, it compiles into three distinct operations:
+Per comprendere come un sistema operativo interagisce con il mondo esterno, è fondamentale visualizzare come sono disposti i componenti hardware all'interno del microcontrollore e come comunicano tra loro.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{contents/images/week_03/BUS_Panoramic.png}
+    \caption{Panoramica funzionamento BUS}
+\end{figure}
+
+\subsection{La Topologia dei Bus: AHB e APB}
+A livello hardware, il sistema non è piatto: i componenti sono distribuiti su reti diverse (chiamate \textit{Bus}) in base alla velocità e all'energia richiesta.
+
+\begin{itemize}
+    \item \textbf{Il Cuore della CPU (Core Peripherals):} Componenti vitali come il \textbf{SysTick} (il timer di sistema) e il \textbf{NVIC} (il gestore degli interrupt) sono integrati direttamente nel processore Cortex-M3. La CPU vi accede istantaneamente per gestire le emergenze, senza passare per reti esterne.
+    \item \textbf{Bus ad Alta Velocità (Bus AHB):} L'\textit{Advanced High-performance Bus} è la rete principale del sistema, capace di scambiare dati alla massima velocità. Viene utilizzata per collegare la \textbf{RAM} (memoria) e il controller \textbf{GPIO}.
+    \item \textbf{La Rete Secondaria (Bus APB):} L'\textit{Advanced Peripheral Bus} è una rete più lenta e a basso consumo energetico. Ospita i dispositivi esterni come la porta \textbf{UART} e i \textbf{Timer}. Per permettere alla CPU di parlare con questa rete, i dati viaggiano sul bus AHB e attraversano un traduttore hardware chiamato \textbf{AHB-to-APB Bridge}.
+\end{itemize}
+
+\subsection{Dalla Simulazione al Bare-Metal: Il Ruolo della UART0}
+Nelle settimane precedenti, il nostro codice stampava messaggi a schermo usando il \textbf{semihosting}. Questa tecnica è di fatto una "scorciatoia": il processore si bloccava e chiedeva al computer esterno (tramite il debugger) di stampare il testo al posto suo.
+
+Un vero sistema operativo \textit{bare-metal} (indipendente e a basso livello) deve però gestire l'hardware da solo. Per farlo, utilizziamo l'\textbf{UART} (\textit{Universal Asynchronous Receiver-Transmitter}), ovvero la porta seriale del microcontrollore, dotata di un canale di trasmissione (\textbf{TX}) e uno di ricezione (\textbf{RX}).
+
+\textbf{Perché comunichiamo tramite la UART0?}\\
+La scheda emulata possiede diverse porte seriali, ma noi utilizziamo l'\texttt{UART0} all'indirizzo \texttt{0x40004000} per un motivo pratico legato al nostro emulatore. Quando avviamo QEMU tramite il comando \texttt{make run}, utilizziamo il flag \texttt{-serial stdio}. 
+Questo comando dice a QEMU di prendere i cavi virtuali TX e RX dell'\texttt{UART0} e collegarli direttamente alla nostra finestra del terminale. Di conseguenza:
+\begin{itemize}
+    \item Quando il nostro codice C scrive un byte (es. la lettera 'A') nel registro \texttt{DATA} dell'\texttt{UART0}, l'hardware lo invia sul cavo TX e QEMU lo stampa a schermo.
+    \item Quando premiamo un tasto sulla tastiera, QEMU inietta quel carattere sul cavo RX, permettendo al nostro software di leggerlo interrogando lo stesso registro.
+\end{itemize}
+
+\section{The Dangers of Read-Modify-Write (RMW)}
+When configuring a hardware device, we often need to change a single bit while leaving the rest of the register untouched. In C, it is natural to use compound operators like \texttt{|=} (e.g., \texttt{CMSDK\_GPIO0->DATAOUT |= (1u << 3)}). 
+
+Even though this looks like a single, instant operation in your code, the processor is forced to execute three distinct steps at the hardware level:
 \begin{enumerate}
-    \item \textbf{Read:} Load the current value of the register from memory into a CPU register.
-    \item \textbf{Modify:} Perform the bitwise OR operation.
-    \item \textbf{Write:} Store the modified value back to the hardware memory address.
+    \item \textbf{Read:} It loads the current value of the register from memory into the CPU.
+    \item \textbf{Modify:} It mathematically alters the target bit using a bitwise operation.
+    \item \textbf{Write:} It saves the new value back, overwriting the hardware register.
 \end{enumerate}
 
-These three operations are \textbf{not atomic}. This introduces several hardware pitfalls:
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{contents/images/week_03/Read-Modify-Write.png}
+    \caption{Read - Modify - Write}
+\end{figure}
+
+This sequence is \textbf{not atomic}, meaning it can be interrupted halfway through. This introduces three classic pitfalls when writing device drivers:
+
 \begin{itemize}
-    \item \textbf{Concurrency conflicts:} If an interrupt fires or the hardware autonomously changes a different bit in the register between your read and your write, your subsequent write will forcefully overwrite the hardware's changes with outdated data.
-    \item \textbf{Write-1-to-clear (W1C) bits:} Certain status registers clear their flags when you write a 1 to them, leaving them alone if you write a 0. Using a read-modify-write pattern on a W1C register reads back all currently set flags (as 1s) and writes them straight back, accidentally clearing every pending interrupt flag.
-    \item \textbf{Read $\neq$ Written:} Some registers return different values when read compared to what was written. Reading and writing back such a register can unintentionally scramble bits you did not mean to touch.
+    \item \textbf{Concurrency conflicts:} If an interrupt fires (or the hardware autonomously changes another bit) between your Read and Write phases, your final Write will forcefully overwrite the entire register with the outdated data you initially read, effectively erasing the hardware's recent changes.
+    \item \textbf{The W1C (Write-1-to-Clear) Trap:} Many status registers turn off an alarm (flag) when you write a \texttt{1} to them. If you use an RMW pattern (\texttt{|=}) here, you will read back all the currently active alarms (as \texttt{1}s) and write them straight back, accidentally resetting every pending interrupt flag at once.
+    \item \textbf{Read/Write Asymmetry:} In some registers, what you read means something entirely different from what you write. A Read-Modify-Write cycle on these registers will scramble the bits unpredictably.
 \end{itemize}
 
-For more on bit operations (set, clear, toggle, test, multi-bit fields) see the \emph{C for device drivers} tutorial. In particular, note why we write \texttt{1u << n} rather than \texttt{1 << n}: the literal \texttt{1} is a signed \texttt{int}, so shifting it into bit~31 is undefined behavior, while \texttt{1u} is unsigned.
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{contents/images/week_03/W1C.png}
+    \caption{Write 1 to Clean Trap}
+\end{figure}
 
 \subsection{Safer Hardware Patterns}
-To avoid these pitfalls:
+To communicate with registers safely, adopt these practices:
 \begin{itemize}
-    \item \textbf{Set / Clear Registers:} Many modern peripherals provide dedicated registers strictly for setting or clearing bits (e.g., \texttt{OUTENABLESET}). Writing \texttt{CMSDK\_GPIO0->OUTENABLESET = 1u << 3;} is a single write operation; the hardware ensures that only the bits set to 1 are modified.
-    \item \textbf{W1C Registers:} Always use a plain assignment (\texttt{=}) containing only the specific bit you want to clear. Never use \texttt{|=}.
-    \item \textbf{Unavoidable Read-Modify-Write:} If a read-modify-write is strictly required, make sure nothing else can touch the register in the meantime (as for Week~2's CCR, where the \texttt{STKALIGN} bit had to stay~1). We will learn to handle this gracefully later in the course.
+    \item \textbf{Use Dedicated Registers (Set/Clear):} Modern peripherals offer special registers (like \texttt{OUTENABLESET}) designed to be used with a simple direct assignment (\texttt{=}). The hardware handles it internally, ensuring only the bits set to \texttt{1} are modified in a single, safe operation.
+    \item \textbf{How to Handle W1C:} To clear a flag in a W1C register, \textbf{always} use a direct assignment (\texttt{=}) targeting only the specific bit you want to clear. \textbf{Never} use \texttt{|=}.
+    \item \textbf{Careful with C Bit-Shifts:} Always write \texttt{1u << n} rather than \texttt{1 << n}. The \texttt{u} forces the compiler to treat the number as unsigned. Shifting a signed \texttt{1} into the 31st bit is undefined behavior in C and will cause glitches.
 \end{itemize}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{contents/images/week_03/Read-Modify-Write Solutions.png}
+    \caption{Read - Modify - Write Solutions}
+\end{figure}
 
 \section{The Device Protocol and the Driver Concept}
-Interacting with a hardware device requires following a strict state machine protocol dictated by the device's manual. A device is not a single variable, but a \textbf{protocol} expressed through its registers, with a fixed order of steps:
 
-\begin{verbatim}
-configure --> enable --> check status --> move data --> acknowledge
-(BAUDDIV)     (CTRL)     (STATE)          (DATA)        (INTSTATUS)
-\end{verbatim}
+A \textbf{device driver} is a dedicated piece of software that acts as a translator between the operating system and the physical hardware. Instead of forcing the main application to memorize memory addresses and bitwise operations, the driver hides this complexity behind a clean API boundary. 
 
-\begin{itemize}
-  \item You \textbf{configure} before you \textbf{enable}: set the speed before switching the transmitter on.
-  \item You \textbf{check the status} before \textbf{moving data}: write \texttt{DATA} only when the device has room, and read it only when a byte is there.
-  \item You \textbf{acknowledge} an event by clearing its flag, so that the device can report the next one.
-\end{itemize}
+It offers the rest of the system \textbf{functions with a clear meaning} (e.g., \texttt{uart\_putc('A')} to "send this byte"), while internally dealing with the strict hardware rules. Callers simply include the driver's header (\texttt{drivers/uart.h}) and never touch the raw register map (\texttt{cmsdk.h}).
 
-A \textbf{device driver} is the code that implements this protocol once, offering the rest of the system \textbf{functions with a meaning} (``send this byte'') instead of addresses and bits. It acts as an \textbf{API boundary}: callers include the driver's header (\texttt{drivers/uart.h}) and never \texttt{cmsdk.h}, keeping hardware addresses abstracted.
+\subsection{The Hardware State Machine}
+Interacting with a hardware device is never as simple as writing to a single variable. It requires following a strict state machine protocol dictated by the device's manual. A device is a \textbf{protocol} expressed through its registers, always executed in a fixed, logical sequence:
 
-We will build a UART driver to replace Week 2's artificial semihosting trick with real hardware communication. The driver API starts small:
+\begin{enumerate}
+    \item \textbf{Configure} (e.g., \texttt{BAUDDIV}): Set up the operating parameters before turning anything on. For a UART, this means calculating and setting the transmission speed (baud rate).
+    \item \textbf{Enable} (e.g., \texttt{CTRL}): Power on the specific sub-components (like the transmitter or receiver). You must enable the device \textit{only after} it has been fully configured.
+    \item \textbf{Check Status} (e.g., \texttt{STATE}): Never blindly send or receive. You must read the status flags to ensure the hardware buffer actually has room to accept a new byte, or that a new incoming byte is truly waiting to be read.
+    \item \textbf{Move Data} (e.g., \texttt{DATA}): Once the status is confirmed to be clear and ready, you can safely read or write the actual data payload.
+    \item \textbf{Acknowledge} (e.g., \texttt{INTSTATUS}): If the device generated an event (such as triggering an interrupt), you must clear its specific flag to tell the hardware you have handled the event, allowing it to report the next one.
+\end{enumerate}
 
-\begin{lstlisting}[language=C]
-void uart_init(void);               /* Set up UART0; called once at boot */
-void uart_putc_polled(char c);      /* Send one byte; waits if buffer is full */
-int uart_getc_polled(void);         /* Get a byte, or -1 if none is waiting */
-\end{lstlisting}
-
-\textbf{Polled} means the driver reads the hardware status register in a loop (for sending) or once per call (for receiving) to check for readiness, without using interrupts.
-
-\subsection{The CMSDK UART Registers}
-\textbf{UART} stands for Universal Asynchronous Receiver-Transmitter. The CMSDK UART has five registers:
-
-\begin{table}[h!]
+\begin{figure}[h]
     \centering
-    \small
-    \begin{tabular}{l l p{3cm} p{6.5cm}}
-        \toprule
-        \textbf{Offset} & \textbf{Register} & \textbf{Access} & \textbf{Bits} \\ \midrule
-        \texttt{0x00} & \texttt{DATA} & read / write &
-        write: byte to send; read: received byte (\texttt{RXBF} goes back to 0) \\
-        \texttt{0x04} & \texttt{STATE} & read; bits 2--3 W1C &
-        0 \textbf{TXBF}: send buffer full; 1 \textbf{RXBF}: byte waiting;
-        2 \texttt{TXOR}, 3 \texttt{RXOR}: overruns \\
-        \texttt{0x08} & \texttt{CTRL} & read / write &
-        0 \textbf{TXEN}; 1 \textbf{RXEN}; 2 \texttt{TXIRQEN}; 3 \texttt{RXIRQEN};
-        4--5 overrun IRQ enables \\
-        \texttt{0x0C} & \texttt{INTSTATUS} & read / W1C &
-        0 TX, 1 RX, 2 TXOR, 3 RXOR: interrupt pending; write 1 to clear \\
-        \texttt{0x10} & \texttt{BAUDDIV} & read / write &
-        clock divided by the baud rate, at least 16 \\ \bottomrule
-    \end{tabular}
-\end{table}
-
-The UART holds \textbf{one byte} in each direction. When \texttt{TXBF} is 1, the last byte you wrote is still going out, and a byte written now is lost (transmit overrun, \texttt{TXOR}). When \texttt{RXBF} is 1, a received byte is waiting, and if another byte arrives before you read it, it is lost (receive overrun, \texttt{RXOR}). After reset, \texttt{CTRL} is 0: the transmitter and receiver are \textbf{off}, and the UART ignores anything written to \texttt{DATA}.
+    \includegraphics[width=0.5\textwidth]{contents/images/week_03/device_driver_protocol.png}
+    \caption{Device Driver Protocol - steps}
+\end{figure}
 
 \subsubsection{Configuring the Baud Rate}
 Because UART is asynchronous, both devices must agree on a transmission speed (baud rate). You divide your CPU's clock frequency by your target baud rate. If our CPU runs at 25 MHz and we want 115,200 baud:
 \[ \text{BAUDDIV} = \frac{25,000,000}{115,200} \approx 217 \]
 Writing 217 into \texttt{BAUDDIV} configures the hardware correctly.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{contents/images/week_03/TX-RX.png}
+    \caption{How transmission flags works}
+\end{figure}
 
 \section{Implementing the Device Driver}
 
@@ -514,17 +543,24 @@ In C, a function that accepts an arbitrary number of arguments (like \texttt{pri
 void kprintf(const char *fmt, ...);
 \end{lstlisting}
 
-\texttt{<stdarg.h>} is one of the headers a freestanding build still gives you, as you saw in Week~2: it contains only types and compiler built-ins, no library code. It provides the tools to walk through the extra arguments: \texttt{va\_list}, \texttt{va\_start}, \texttt{va\_arg} and \texttt{va\_end}.
+\texttt{<stdarg.h>} is one of the headers a freestanding build still gives you, as you saw in Week~2: it contains only types and compiler built-ins, no library code. Behind the scenes, it provides macros to navigate the memory (the stack or registers) where the extra arguments are stored. Here is exactly what the macros do:
+
+\begin{itemize}
+    \item \textbf{\texttt{va\_list ap}:} Think of this as an ``argument pointer'' (hence \texttt{ap}). It is a special cursor variable that keeps track of your current position within the hidden list of extra arguments.
+    \item \textbf{\texttt{va\_start(ap, fmt)}:} This initializes the cursor. By passing the last known fixed argument (\texttt{fmt}), the compiler calculates exactly where in memory the variable arguments begin.
+    \item \textbf{\texttt{va\_arg(ap, int)}:} This macro performs two actions simultaneously. First, it reads the value at the cursor's current position (interpreting it as the specified type, like \texttt{int}). Second, it automatically advances the cursor by the exact number of bytes required to reach the next argument.
+    \item \textbf{\texttt{va\_end(ap)}:} This cleans up the cursor. While on some architectures (like our Cortex-M3) it might do nothing behind the scenes, it is strictly mandatory for C standard compliance and prevents memory corruption on more complex systems.
+\end{itemize}
 
 \begin{lstlisting}[language=C]
 #include <stdarg.h>
 
 void kprintf(const char *fmt, ...)
 {
-    va_list ap;                  /* a cursor over the extra arguments    */
-    va_start(ap, fmt);           /* start right after the last named one */
-    int n = va_arg(ap, int);     /* take the next argument, as an int    */
-    va_end(ap);                  /* done                                 */
+    va_list ap;                  /* 1. create the cursor */
+    va_start(ap, fmt);           /* 2. point it right after 'fmt' */
+    int n = va_arg(ap, int);     /* 3. read the first extra arg as int, advance cursor */
+    va_end(ap);                  /* 4. clean up */
 }
 \end{lstlisting}
 
@@ -547,9 +583,11 @@ void vformat(void (*out)(char c, void *ctx), void *ctx,
              const char *fmt, va_list ap);
 \end{lstlisting}
 
-\texttt{out} is a \textbf{function pointer}: \texttt{vformat} calls \texttt{out(c, ctx)} once for every character it produces. \texttt{ctx} is passed to \texttt{out} untouched, and holds whatever state the output needs (for example a buffer and a position in it). 
+The \texttt{out} parameter is a \textbf{function pointer}. Instead of hardcoding \texttt{uart\_putc\_polled} directly inside the formatting loop, we pass the output function as a variable. \texttt{vformat} calls \texttt{out(c, ctx)} once for every character it produces. This decouples the logic: \texttt{vformat} formats text, completely unaware of whether the characters are going to a UART, a screen, or a network socket.
 
-\texttt{kprintf} is then \texttt{vformat} with an \texttt{out} that calls \texttt{uart\_putc\_polled}, and a \texttt{ctx} of 0 because it needs no state. 
+The \texttt{void *ctx} (context) is an \textbf{opaque pointer}. This is a standard C design pattern used to pass arbitrary state data through a generic function. \texttt{vformat} does not know or care what \texttt{ctx} points to; it simply receives it and hands it untouched to your \texttt{out} function. If your output function needs to keep track of a string buffer or a character counter, you pass a pointer to that structure as \texttt{ctx}. 
+
+\texttt{kprintf} is then built by calling \texttt{vformat} with an \texttt{out} function that calls \texttt{uart\_putc\_polled}. Since a UART just blasts characters out and requires no memory state tracking, we simply pass \texttt{0} (or \texttt{NULL}) as the \texttt{ctx}. 
 
 Another destination needs only another small \texttt{out} function: the formatting is written and tested once.
 
@@ -648,7 +686,7 @@ Any operating system that implements hardware protection features both a user-si
 \subsection{Implementing \texttt{kprintf}}
 In \texttt{kernel/kprintf.c}, we write a small wrapper function that connects \texttt{vformat} to our polled UART driver.
 
-First, we define the callback function that \texttt{vformat} expects. This simply takes a character and hands it to the driver:
+First, we define the callback function that \texttt{vformat} expects. This simply takes a character and hands it to the hardware driver:
 \begin{lstlisting}[language=c]
 #include "kernel/kprintf.h"
 #include "lib/format.h"
@@ -656,12 +694,15 @@ First, we define the callback function that \texttt{vformat} expects. This simpl
 
 /* vformat's output: one char to the UART */
 static void kprintf_out( char c, void *ctx ){
-    (void) ctx;     /* not used */
+    (void) ctx;     /* tell the compiler this argument is intentionally unused */
     uart_putc_polled( c );
 }
 \end{lstlisting}
 
-Then, we implement the variadic \texttt{kprintf} function itself. It collects its extra arguments into a \texttt{va\_list} and hands everything to \texttt{vformat}, with \texttt{kprintf\_out} as the destination:
+\paragraph{Why \texttt{(void) ctx}?} 
+The \texttt{vformat} engine expects its output function to accept two arguments: the character to print and the context pointer (\texttt{ctx}). Our \texttt{kprintf\_out} function must accept both to match the required signature, even though a simple polled UART driver does not need any context state. Writing \texttt{(void) ctx;} is a standard C idiom: it explicitly tells the compiler that the parameter is intentionally ignored, suppressing the 'unused parameter' warning during compilation.
+
+Then, we implement the variadic \texttt{kprintf} function itself. It collects its extra arguments into a \texttt{va\_list} and hands everything over to \texttt{vformat}, setting \texttt{kprintf\_out} as the destination and \texttt{0} (NULL) as the context:
 \begin{lstlisting}[language=c]
 void kprintf( const char *fmt, ... )
 {
@@ -672,11 +713,15 @@ void kprintf( const char *fmt, ... )
 }
 \end{lstlisting}
 
+\paragraph{How the \texttt{va\_list} is passed:}
+Notice that \texttt{kprintf} itself does not call \texttt{va\_arg} to read the arguments. It simply initializes the cursor (\texttt{ap}) with \texttt{va\_start}, and passes the whole cursor by value to \texttt{vformat}. It is the job of the \texttt{switch} statement inside \texttt{vformat} to call \texttt{va\_arg} and advance the cursor as it parses the format string. When \texttt{vformat} returns, \texttt{kprintf} cleans up the cursor with \texttt{va\_end}.
+
 Because \texttt{kprintf} relies on our polled UART driver, it operates entirely without hardware interrupts. This is a massive architectural advantage: it means \texttt{kprintf} can be safely executed anywhere in the kernel, even inside a catastrophic \texttt{HardFault} handler where interrupts are strictly disabled.
 
 To test every conversion, we can add a test line in \texttt{src/main.c}:
 \begin{lstlisting}[language=c]
-kprintf( "c=%c s=%s d=%d u=%u x=%x pct=%%\n", 'A', "hi", -42, 4000000000u, 0xBEEFu );
+kprintf( "c=%c s=%s d=%d u=%u x=%x pct=%%\n", 
+                'A', "hi", -42, 4000000000u, 0xBEEFu );
 \end{lstlisting}
 This outputs \texttt{c=A s=hi d=-42 u=4000000000 x=beef pct=\%}. Notice that \texttt{\%x} prints no \texttt{0x} prefix; if you want one, you must write it explicitly in the format string (e.g., \texttt{"0x\%x"}).
 
@@ -747,6 +792,173 @@ The value \texttt{0x2000000} indicates that bit 25 is set, which perfectly corre
 As we build these low-level layers, the codebase is becoming increasingly complex. Files are spread across different directories (\texttt{drivers/}, \texttt{kernel/}, \texttt{lib/}, \texttt{src/}), each serving a distinct architectural role.
 
 From an academic and practical standpoint, it is critical to understand how to navigate this project structure. During an exam (or in a real-world debugging scenario), you will not be asked to write a full operating system from scratch in 90 minutes. Instead, you will typically be given an existing, structured project and asked to implement a specific function, fix a bug, or integrate a new hardware feature. Mastering how to read the existing code, locate the correct files, and understand the flow of execution is just as important as understanding the hardware registers themselves.
+
+\section{A prova di coglione}
+L'Unità 1 descrive la transizione da un programma dipendente dall'emulatore a un sistema operativo bare-metal capace di gestire autonomamente l'hardware. Il focus principale è la creazione di un driver per la porta seriale (UART) comunicando direttamente con i registri fisici.   Architettura e Memory-Mapped I/O
+
+Il sistema utilizza una CPU Cortex-M3 collegata a un bus veloce AHB per la memoria e a un bus secondario APB per le periferiche (come l'UART e i timer). Attraverso il paradigma Memory-Mapped I/O (MMIO), i dispositivi hardware vengono controllati leggendo e scrivendo su specifici indirizzi di memoria (ad esempio 0x40004000 per l'UART0). L'accesso a questi registri in C richiede rigorosamente la parola chiave volatile per forzare il compilatore a eseguire ogni singola operazione di I/O, evitando che vengano rimosse durante la fase di ottimizzazione.   Sviluppo del Device Driver in Polling
+
+Il software comunica con l'UART tramite polling: la CPU interroga continuamente un registro di stato per verificare se l'hardware è pronto a ricevere o inviare un dato, bloccandosi in un ciclo di attesa. Questa interazione deve seguire un preciso protocollo di stato (configurazione, abilitazione, check, trasferimento e reset) e deve evitare le trappole hardware del Read-Modify-Write, in particolare sovrascritture accidentali sui registri Write-1-to-Clear (W1C).   Stampa Kernel e Gestione Errori
+
+Il driver viene infine separato dalla logica di formattazione delle stringhe tramite la funzione vformat e i puntatori a funzione, dando vita a kprintf. Questa funzione permette al kernel (che opera in modalità privilegiata) di stampare messaggi formattati scavalcando le system call. Poiché non si basa sugli interrupt, kprintf è sicura da usare ovunque, permettendo ai gestori delle eccezioni (Fault Handlers) di stampare a terminale il contenuto dei registri diagnostici come il CFSR e l'HFSR in caso di crash di sistema. 
+
+% ======================= INIZIO TABELLA =======================
+{\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.2}
+\noindent\textbf{Come leggere la tabella.} Seconda colonna: l'idea in parole semplici. Terza colonna: \esem un caso concreto, \attn l'errore tipico, \regl la regola da ricordare.\par\medskip
+\begin{longtable}{P{0.15}P{0.36}P{0.40}}
+    \caption{Riepilogo dei concetti dell'Unità 1}\\
+    \toprule
+    \textbf{Concetto} & \textbf{In parole semplici} & \textbf{Esempio, errore tipico, regola}\\
+    \endfirsthead
+    \toprule
+    \textbf{Concetto} & \textbf{In parole semplici} & \textbf{Esempio, errore tipico, regola}\\
+    \endhead
+    \bottomrule
+    \endfoot
+
+    \grp{1. Hardware e scheda}
+        CMSDK e CMSIS
+        & CMSDK è \textbf{hardware}: i blocchi già pronti (UART, timer, GPIO) che il costruttore del chip mette accanto alla CPU. CMSIS è \textbf{software}: uno stile standard di header C, con nomi e funzioni.
+        & \esem \texttt{cmsdk.h} descrive l'hardware CMSDK, ma è scritto a mano con i nomi nello stile CMSIS, senza librerie dei produttori.\nl
+        \regl CMSDK = circuiti, CMSIS = codice.\rr
+        Scheda MPS2-AN385
+        & La scheda che emuliamo: una CPU Cortex-M3 circondata da periferiche CMSDK. QEMU la simula con \texttt{mps2-an385}. Tutto è guidato da un unico clock a 25~MHz.
+        & \esem velocità della UART e periodi dei timer si calcolano partendo da 25~MHz.\rr
+        Bus AHB e APB\sig{Advanced High-performance / Peripheral Bus}
+        & Il bus è l'insieme di fili su cui viaggiano le load e le store. AHB è l'autostrada: veloce, per RAM, codice e GPIO. APB è la strada secondaria: lenta e a basso consumo, per UART, timer e watchdog. Un \emph{bridge} (il casello) le collega.
+        & \regl dal codice C non cambia nulla: un registro è sempre solo un indirizzo.\nl
+        \attn l'accesso a un registro APB costa qualche ciclo in più.\rr
+        Linee IRQ\sig{Interrupt Request}
+        & Una periferica avvisa la CPU di un evento (un byte arrivato, un timer scaduto) alzando la sua linea IRQ. La linea numero $n$ usa lo slot $16+n$ della tabella dei vettori.
+        & \esem UART0 RX = IRQ~0 $\rightarrow$ slot 16, UART0 TX = IRQ~1, TIMER0/1 = IRQ~8/9, dual timer = IRQ~10. Il watchdog usa l'NMI (slot 2).\nl
+        \regl in questa unità gli interrupt sono spenti: la CPU chiede di continuo ai device (\emph{polling}).\rr
+        Mappa di QEMU
+        & Con \texttt{info mtree -f} chiedi a QEMU cosa emula. Tre casi: modello reale (\texttt{prio 0}), funziona davvero; placeholder (\texttt{prio -1000}), finto: scritture ignorate, letture a 0; indirizzo vuoto, ignorato.
+        & \esem UART0 e FPGAIO sono reali, GPIO0 è un placeholder.\nl
+        \attn nessun caso dà un fault: se il codice non funziona, l'accesso a un device finto passa inosservato. Con \texttt{-d unimp} QEMU lo scrive a terminale.\rr
+        Altre interfacce I/O
+        & Oltre alla UART: GPIO (pin letti o pilotati a 0/1, per LED e pulsanti), SPI (clock condiviso e chip select, per flash e display), I2C (2 fili, indirizzi a 7 bit, per sensori), ADC/DAC (tensione $\leftrightarrow$ numero).
+        & \regl si programmano come la UART: registri mappati in memoria, con solo più passi per ogni trasferimento.\rr
+        DMA\sig{Direct Memory Access}
+        & Un controller che copia i dati da solo. Gli dai sorgente, destinazione e numero di byte, lo avvii e la CPU fa altro. Quando ha finito, avvisa con un interrupt.
+        & \attn CPU e DMA condividono il bus: non toccare il buffer mentre il DMA lo riempie.\nl
+        \esem nell'AN385 il DMA non c'è: la CPU sposta ogni byte.\\
+
+    \grp{2. Accesso ai registri}
+        I/O mappato in memoria\sig{MMIO}
+        & Ogni registro di una periferica ha un indirizzo fisso e lo usi con normali load e store. Nel C sembra una variabile, ma dietro c'è un dispositivo.
+        & \attn un registro non è RAM. Leggere può avere un effetto (\texttt{DATA} estrae il byte), scrivere può avviare un'azione, il valore può cambiare da solo (un bit di stato) e ciò che leggi può differire da ciò che hai scritto.\nl
+        \regl segui sempre il manuale del device.\rr
+        Struct sovrapposta
+        & Una \texttt{struct} elenca i registri uno dopo l'altro e viene \emph{sovrapposta} agli indirizzi veri: il primo campo sta all'indirizzo base, ogni \texttt{uint32\_t} successivo 4 byte dopo.
+        & \esem \texttt{CMSDK\_UART0} è \texttt{0x40004000} visto come puntatore alla struct, quindi \texttt{UART0->STATE} è una load a \texttt{0x40004004}.\nl
+        \regl \texttt{\_Static\_assert} con \texttt{offsetof} controlla gli offset in compilazione: un errore nel layout diventa errore di build.\rr
+        \texttt{volatile}
+        & Dice al compilatore: ogni lettura e ogni scrittura che vedi nel sorgente deve avvenire davvero, nell'ordine scritto. Senza, il compilatore crede che solo il tuo programma cambi i valori e toglie le letture che gli sembrano ripetute.
+        & \esem a \texttt{-O2}, senza \texttt{volatile}, il ciclo \texttt{while (STATE \& TXBF)} legge una volta sola e poi gira su se stesso (\texttt{b.n c}).\nl
+        \attn a \texttt{-O0} il bug non si vede. \texttt{volatile} non rende l'accesso atomico e non protegge dati condivisi.\nl
+        \regl sui registri, sempre \texttt{volatile}.\rr
+        Read-modify-write
+        & Scrivere \texttt{REG |= bit} sembra un'operazione sola, ma sono tre: leggi il registro, modifichi il bit nella CPU, riscrivi tutto. I tre passi non sono atomici: nel mezzo può succedere altro.
+        & \attn se un interrupt o il device cambia un altro bit tra lettura e scrittura, la tua scrittura rimette il valore vecchio e quel cambiamento si perde.\rr
+        Registri W1C\sig{Write-1-to-Clear}
+        & Registri di stato in cui scrivere 1 su un bit cancella quel flag, mentre scrivere 0 lo lascia com'è.
+        & \esem per cancellare solo il flag del bit 1: \texttt{STATUS = \sh{1}}.\nl
+        \attn con \texttt{|=} rileggi tutti i flag attivi (come 1) e li riscrivi: li cancelli tutti.\rr
+        Soluzioni sicure
+        & Tre modi per evitare la trappola. (1) Registri SET/CLEAR: una sola scrittura cambia solo i bit scritti a 1. (2) Sui W1C, assegnazione \texttt{=} con il solo bit voluto. (3) Se serve davvero un read-modify-write, nessun altro deve toccare il registro nel frattempo.
+        & \esem \texttt{OUTENABLESET = \sh{3};}. Un RMW inevitabile è il CCR della settimana 2, dove STKALIGN doveva restare a 1.\nl
+        \attn scrivi \sh{n} e non \texttt{1 <\kern0pt< n}: l'\texttt{1} semplice è un \texttt{int} con segno e spostarlo nel bit 31 è comportamento indefinito.\\
+
+    \grp{3. La UART}
+        Semihosting contro UART
+        & Il semihosting è una scorciatoia: la CPU si ferma e chiede al computer host, tramite il debugger, di stampare. Un sistema bare-metal vero non può contare sull'host e usa l'hardware: la UART.
+        & \regl da qui in poi si stampa scrivendo nei registri della UART, senza l'aiuto dell'host.\rr
+        UART\sig{Universal Asynchronous Receiver-Transmitter}
+        & La porta seriale: un filo per trasmettere (TX) e uno per ricevere (RX). È asincrona: non c'è un clock condiviso, quindi i due lati si accordano sulla velocità (\emph{baud rate}).
+        & \esem QEMU collega UART0 al terminale con \texttt{-serial stdio}: un byte scritto in \texttt{DATA} appare a schermo, un tasto premuto arriva su RX.\rr
+        \texttt{DATA}\sig{offset 0x00}
+        & La finestra dei dati. Se scrivi un byte, parte l'invio. Se leggi, ottieni il byte ricevuto.
+        & \attn leggere \texttt{DATA} ha un effetto: porta \texttt{RXBF} a 0, perché il byte è stato preso.\rr
+        \texttt{STATE}\sig{offset 0x04}
+        & Le spie di stato. Bit 0 \texttt{TXBF} (TX Buffer Full): l'invio è occupato. Bit 1 \texttt{RXBF} (RX Buffer Full): c'è un byte da leggere. Bit 2 \texttt{TXOR} e bit 3 \texttt{RXOR}: overrun, cioè un byte perso.
+        & \regl guarda \texttt{STATE} \emph{prima} di toccare \texttt{DATA}.\nl
+        \attn i bit 2--3 sono W1C.\rr
+        \texttt{CTRL}\sig{offset 0x08}
+        & Gli interruttori. Bit 0 \texttt{TXEN}: trasmettitore acceso. Bit 1 \texttt{RXEN}: ricevitore acceso. Bit 2--3 (\texttt{TXIRQEN}, \texttt{RXIRQEN}): interrupt di TX e RX. Bit 4--5: interrupt di overrun.
+        & \attn dopo il reset \texttt{CTRL} vale 0: TX e RX sono spenti e la UART ignora ciò che scrivi in \texttt{DATA}. Con \texttt{-d guest\_errors} QEMU segnala l'errore.\rr
+        \texttt{INTSTATUS}\sig{offset 0x0C}
+        & Dice quale interrupt è in attesa: bit 0 TX, bit 1 RX, bit 2 TXOR, bit 3 RXOR.
+        & \regl è W1C: per confermare un evento scrivi 1 sul suo bit.\rr
+        \texttt{BAUDDIV}\sig{offset 0x10}
+        & Il divisore che fissa la velocità: clock diviso baud rate, almeno 16.
+        & \esem $25\,000\,000 / 115\,200 \approx 217$. Nel nostro codice scriviamo 16 perché QEMU ignora la velocità.\rr
+        Un byte per direzione
+        & La UART ha un solo posto per direzione. In TX, \texttt{TXBF} = 1 significa che l'ultimo byte sta ancora uscendo. In RX, \texttt{RXBF} = 1 significa che un byte aspetta di essere letto.
+        & \attn scrivere con \texttt{TXBF} = 1 perde il nuovo byte (\texttt{TXOR}). Se in RX arriva un altro byte prima che tu legga, va perso (\texttt{RXOR}).\\
+
+    \grp{4. Il driver}
+        Protocollo del device
+        & Un device non è una variabile ma un protocollo: passi in ordine fisso sui registri. (1)~Configura. (2)~Abilita. (3)~Controlla lo stato. (4)~Muovi i dati. (5)~Conferma l'evento.
+        & \esem sulla UART: \texttt{BAUDDIV} $\rightarrow$ \texttt{CTRL} $\rightarrow$ \texttt{STATE} $\rightarrow$ \texttt{DATA} $\rightarrow$ \texttt{INTSTATUS}.\nl
+        \regl prima configura e poi abilita, prima lo stato e poi i dati, e conferma ogni evento cancellando il suo flag.\rr
+        Driver e API\sig{Application Programming Interface}
+        & Il driver è il codice che conosce il protocollo e lo esegue una volta sola, offrendo al resto del sistema funzioni con un significato (``manda questo byte'') invece di indirizzi e bit.
+        & \regl chi usa il driver include \texttt{drivers/uart.h} e non \texttt{cmsdk.h}: gli indirizzi restano nascosti dentro il driver.\nl
+        \emph{Polled} = il driver legge \texttt{STATE} in un ciclo, senza interrupt.\rr
+        \texttt{uart\_init}
+        & Si chiama una sola volta all'avvio. Configura e abilita: scrive \texttt{BAUDDIV = 16} e poi \texttt{CTRL = TXEN | RXEN}.
+        & \regl le due maschere si combinano con \texttt{|} per accendere TX e RX insieme.\nl
+        \attn senza \texttt{uart\_init} la UART scarta ogni byte (\texttt{CTRL} = 0).\rr
+        \texttt{uart\_putc\_\allowbreak polled}
+        & Invia un byte: aspetta finché \texttt{TXBF} vale 0 (c'è posto), poi scrive il byte in \texttt{DATA}.
+        & \esem \texttt{uart\_putc\_polled('A')}.\nl
+        \attn doppio cast \texttt{(uint32\_t)(unsigned char)c}: un \texttt{char} con segno come \texttt{0xE9} diventerebbe \texttt{0xFFFFFFE9}. Passando per \texttt{unsigned char} resta \texttt{0x000000E9}.\rr
+        \texttt{uart\_getc\_\allowbreak polled}
+        & Prova a leggere un byte: se \texttt{RXBF} vale 0 restituisce $-1$ subito, senza aspettare. Altrimenti restituisce il byte letto da \texttt{DATA}.
+        & \esem nel ciclo di echo, se il valore è $\geq 0$ lo rimanda indietro.\nl
+        \attn la CPU gira milioni di volte al secondo anche se non premi nulla: è il prezzo del polling.\rr
+        Driver con puntatori a funzione
+        & I sistemi grandi descrivono ogni driver con una \texttt{struct} di puntatori a funzione (\texttt{init}, \texttt{read}, \texttt{write}): il codice generico usa qualsiasi device senza conoscerlo.
+        & \esem Linux usa \texttt{file\_operations}.\nl
+        \regl questa settimana non la scriviamo: c'è una sola console, quindi si chiamano direttamente le funzioni della UART.\\
+
+    \grp{5. kprintf e fault}
+        Funzioni variadiche
+        & Funzioni con un numero qualsiasi di argomenti, dichiarate con \texttt{...} come \texttt{printf}. Il cursore \texttt{va\_list ap} scorre gli argomenti extra: \texttt{va\_start} lo mette dopo l'ultimo argomento fisso, \texttt{va\_arg(ap, tipo)} legge un valore e avanza, \texttt{va\_end} chiude.
+        & \attn la funzione non sa né quanti argomenti riceve né di che tipo: lo dice la stringa di formato. Se il tipo non corrisponde, il comportamento è indefinito.\nl
+        \regl un \texttt{char} arriva come \texttt{int}, quindi \texttt{\%c} legge con \texttt{va\_arg(ap, int)}.\rr
+        \texttt{vformat} e \texttt{out}
+        & \texttt{vformat(out, ctx, fmt, ap)} trasforma il formato in caratteri e chiama \texttt{out(c, ctx)} per ognuno: sa \emph{cosa} stampare, non \emph{dove}. \texttt{out} è un puntatore a funzione (la destinazione), \texttt{ctx} un puntatore opaco che passa senza guardarlo.
+        & \regl per un'altra destinazione (schermo, buffer, rete) basta un altro \texttt{out}: il formato si scrive e si prova una volta sola.\nl
+        \esem per la UART \texttt{ctx} vale 0.\rr
+        Conversioni supportate
+        & Dopo il \texttt{\%} la lettera dice cosa stampare: \texttt{\%c} carattere, \texttt{\%s} stringa, \texttt{\%d} intero con segno, \texttt{\%u} intero senza segno, \texttt{\%x} esadecimale, \texttt{\%\%} il simbolo \%.
+        & \attn niente larghezza né precisione, \texttt{\%x} non aggiunge \texttt{0x}, \texttt{\%s} nullo stampa \texttt{(null)}, una conversione sconosciuta esce com'è.\nl
+        \regl per \texttt{\%d} si usa \texttt{0u - (uint32\_t)v} e non \texttt{-v}: con \texttt{INT\_MIN} il \texttt{-v} è un overflow.\rr
+        \texttt{kprintf}\sig{k = kernel}
+        & Collega il formato alla UART: \texttt{va\_start}, poi \texttt{vformat(kprintf\_out, 0, fmt, ap)}, poi \texttt{va\_end}. \texttt{kprintf\_out} manda ogni carattere a \texttt{uart\_putc\_polled}.
+        & \esem \texttt{kprintf("d=\%d\textbackslash n", -42)} fa 6 chiamate a \texttt{out}: \texttt{d}, \texttt{=}, \texttt{-}, \texttt{4}, \texttt{2} e l'a capo.\nl
+        \regl è in polling, quindi funziona ovunque, anche dentro un HardFault. \texttt{(void) ctx} evita il warning sul parametro non usato.\rr
+        \texttt{kprintf} e \texttt{printf}
+        & Il kernel è privilegiato e parla direttamente col driver. Un'applicazione utente non può toccare l'hardware: il suo \texttt{printf} chiede al kernel di stampare con una system call.
+        & \attn il kernel non può usare \texttt{printf} per i propri messaggi: una \texttt{svc} dentro l'handler di SVCall causa un HardFault.\rr
+        Fault che stampano
+        & Gli handler dei fault ora scrivono il motivo prima di fermarsi. Due registri lo dicono: \texttt{CFSR} (\texttt{0xE000ED28}) per MemManage, BusFault e UsageFault; \texttt{HFSR} (\texttt{0xE000ED2C}) per l'HardFault, dove il bit 30 \texttt{FORCED} indica un fault escalato.
+        & \esem \texttt{10u / zero} dà UsageFault con \texttt{CFSR=0x2000000}: il bit 25 è \texttt{DIVBYZERO}, perché il CCR abilita la trappola.\nl
+        \regl \texttt{zero} è \texttt{volatile}, così la divisione avviene a runtime e non in compilazione.\\
+
+    \grp{6. Orientarsi nel progetto}
+        Struttura delle cartelle
+        & Il codice è diviso per ruolo: \texttt{include/} (mappa dei registri \texttt{cmsdk.h}), \texttt{drivers/} (UART), \texttt{kernel/} (\texttt{kprintf}, fault), \texttt{lib/} (\texttt{vformat}, conversione dei numeri), \texttt{src/} (\texttt{main}).
+        & \regl all'esame di solito ricevi un progetto già fatto e devi aggiungere una funzione o correggere un bug: saper trovare il file giusto conta quanto conoscere i registri.\\
+\end{longtable}
+}
+% ======================== FINE TABELLA ========================
+
+
 
 \section{Unit 2: Calling Convention and Interrupts}
 
@@ -1577,7 +1789,6 @@ void app_main( void )
 While \texttt{app\_main} runs unprivileged, hardware interrupts (SysTick, UART TX) and system calls (SVCall) still execute privileged: the Cortex-M hardware raises privilege on exception entry and restores unprivileged mode on return.
 
 \subsection{A Debug Print Inside the Kernel}
-\label{sec:kernel-debug-print}
 This experiment answers a question: why does the kernel keep its own \texttt{kprintf}, now that there is a \texttt{printf}? Suppose you want to trace every uptime request. In \texttt{kernel/syscall.c}, add \texttt{\#include "lib/printf.h"} below the other includes, and in \texttt{sys\_uptime\_impl} add one line before the \texttt{return}:
 
 \begin{lstlisting}[language=C]
@@ -1598,7 +1809,6 @@ Follow the call: \texttt{printf} $\rightarrow$ \texttt{write\_all} $\rightarrow$
 \texttt{HFSR} bit~30, \textbf{FORCED} (\texttt{0x40000000}, \texttt{SCB\_HFSR\_FORCED} in \texttt{include/cmsdk.h}), means ``a fault was escalated to HardFault''. Notice that the report itself prints fine: \texttt{HardFault\_Handler} uses \texttt{kprintf}, which needs no \texttt{svc}. Undo both edits (the \texttt{\#include} and the \texttt{printf} line).
 
 \subsection{Making the Kernel Wait}
-\label{sec:kernel-wait-exp}
 The second experiment answers another question: why does \texttt{sys\_write} return a count instead of simply waiting until everything is sent? Make two temporary edits. In \texttt{kernel/syscall.c}, in \texttt{sys\_write\_impl}, replace \texttt{return uart\_write(buf, len);} with a loop that waits until \textbf{everything} is accepted:
 
 \begin{lstlisting}[language=C]

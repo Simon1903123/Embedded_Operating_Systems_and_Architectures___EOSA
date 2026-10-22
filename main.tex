@@ -70,6 +70,30 @@
 
 \usepackage{amsmath}
 
+% ---- Pacchetti necessari alla tabella (copiali nel preambolo delle dispense) ----
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage[table]{xcolor}
+
+% ---- Macro della tabella ----
+% Colonne a larghezza relativa a \textwidth: se serve, cambia solo questi tre numeri.
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1\textwidth}}
+% Riga di titolo di un gruppo di concetti (\\* impedisce che resti isolata a fondo pagina)
+\newcommand{\grp}[1]{\midrule\rowcolor{gray!15}\multicolumn{3}{l}{\textbf{#1}}\\*}
+% Fine riga con una linea sottile (si usa su tutte le righe tranne l'ultima di ogni gruppo)
+\newcommand{\rr}{\\\arrayrulecolor{black!25}\midrule[0.3pt]\arrayrulecolor{black}}
+% Spiegazione della sigla sotto il nome del concetto
+\newcommand{\sig}[1]{\newline{\footnotesize\emph{#1}}}
+% Etichette della terza colonna
+\newcommand{\esem}{\textcolor{blue!60!black}{\textbf{Esempio:}}\space}
+\newcommand{\attn}{\textcolor{red!70!black}{\textbf{Attenzione:}}\space}
+\newcommand{\regl}{\textcolor{green!40!black}{\textbf{Regola:}}\space}
+% Nuovo capoverso dentro una cella
+\newcommand{\nl}{\par\vspace{3pt}}
+% "1u << n" senza che << diventi una legatura
+\newcommand{\sh}[1]{\texttt{1u <\kern0pt< #1}}
+
 
 \usepackage{booktabs}  % Per linee più eleganti (\toprule, \midrule)
 \usepackage{array}     % Per una gestione avanzata delle colonne
@@ -151,8 +175,8 @@
 
 %\include{contents/week-01_Intro_and_toolchain}
 %\include{contents/week-02_Boot_and_CPU_Configuration}
-%\include{contents/week-03_IO_and_Interrupts}
-\include{contents/week-04_MR_Management_and_Protection}
+\include{contents/week-03_IO_and_Interrupts}
+%\include{contents/week-04_MR_Management_and_Protection}
 %\include{contents/exercises}
 
 \end{document}
