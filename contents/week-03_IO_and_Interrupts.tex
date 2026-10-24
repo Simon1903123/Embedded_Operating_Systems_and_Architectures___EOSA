@@ -107,7 +107,7 @@ The Watchdog timer bypasses standard IRQ lines and directly raises a \textbf{Non
 To interact with the hardware, the provided \texttt{include/cmsdk.h} file describes each device as a C \texttt{struct} \textbf{laid over its registers}. The first field maps to the device's base address, and each subsequent \texttt{uint32\_t} field sits exactly 4 bytes after the previous one. 
 
 For example, the serial port is defined as \texttt{CMSDK\_UART\_TypeDef}:
-\begin{lstlisting}[language=C]
+\begin{lstlisting}
 typedef struct
 {
     volatile uint32_t DATA;      /* 0x00 read = received byte, write = byte to send */
@@ -228,7 +228,7 @@ A \textbf{DMA controller} (Direct Memory Access) is a device that copies data by
 \subsection{Memory-Mapped I/O: Loads and Stores with Side Effects}
 Every peripheral register has a fixed address, and you talk to a device with ordinary load and store instructions at that address. This is called \textbf{memory-mapped I/O} (MMIO). Written without the \texttt{struct}, sending a byte looks like this:
 
-\begin{lstlisting}[language=C]
+\begin{lstlisting}
 #define UART0_DATA (*(volatile uint32_t *)0x40004000u)
 UART0_DATA = 'A';      /* a store to 0x40004000: the UART sends 'A' */
 \end{lstlisting}
@@ -246,7 +246,7 @@ The device's manual says what each read and each write does, and your code must 
 \subsection{The \texttt{volatile} Keyword}
 The compiler assumes that it is working with ordinary memory, where a value changes only when \textbf{your program} stores to it. With optimization turned on, it keeps values in CPU registers and removes reads it believes are repeated. Consider the loop that waits for the UART to have room:
 
-\begin{lstlisting}[language=C]
+\begin{lstlisting}
 while ( UART0_STATE & UART_STATE_TXBF )   /* wait until the UART has room */
 {
 }
@@ -259,7 +259,7 @@ The keyword \texttt{volatile} tells the compiler: \textbf{every read and every w
 \subsubsection{Try It: \texttt{volatile} at \texttt{-O2}}
 You can watch the compiler delete a hardware read. In a folder outside \texttt{base/} (for example \texttt{/tmp/vol}), create \texttt{poll.c}:
 
-\begin{lstlisting}[language=C]
+\begin{lstlisting}
 #include <stdint.h>
 
 #ifndef QUAL
@@ -425,7 +425,7 @@ Writing 217 into \texttt{BAUDDIV} configures the hardware correctly.
 \subsection{How Bigger OSes Generalize a Driver}
 If a system has many character devices, the OS needs a generic way to talk to them. Operating systems solve this by defining a \texttt{struct} composed of function pointers:
 
-\begin{lstlisting}[language=C]
+\begin{lstlisting}
 struct char_driver 
 {
     void (*init)(void);          /* bring the device up */
@@ -445,7 +445,7 @@ This allows generic code to interact with any device (e.g., \texttt{dev->write('
 \subsection{Implementing and Using the UART Driver}
 In \texttt{drivers/uart.c}, paste the following right \textbf{above} the marker line \texttt{/* CLASS: uart\_init, polled putc/getc, ...} (keep the marker for Unit~2).
 
-\begin{lstlisting}[language=C]
+\begin{lstlisting}
 #include "drivers/uart.h"
 #include "cmsdk.h"
 
@@ -476,7 +476,7 @@ In \texttt{uart\_putc\_polled}, if the \texttt{TXBF} bit is 1, the CPU loops wai
 \paragraph{Testing the Driver}
 In \texttt{src/main.c}, add \texttt{\#include "drivers/uart.h"} above \texttt{main}, and right after the marker \texttt{/* CLASS: bring up the UART here */} add:
 
-\begin{lstlisting}[language=C]
+\begin{lstlisting}
 #include "drivers/uart.h"
 
 int main(void)
@@ -500,7 +500,7 @@ This enforces the rule ``enable before moving data''.
 \subsection{Try It: A Polled Echo}
 In \texttt{drivers/uart.c}, right after \texttt{uart\_putc\_polled}, add the reading function. It returns \texttt{-1} immediately if no character is waiting:
 
-\begin{lstlisting}[language=C]
+\begin{lstlisting}
 int uart_getc_polled(void)
 {
     /* check status: nothing received yet */
@@ -515,7 +515,7 @@ int uart_getc_polled(void)
 
 In \texttt{src/main.c}, replace the empty \texttt{for (;;) \{ \}} at the end of \texttt{main} with an echo loop:
 
-\begin{lstlisting}[language=C]
+\begin{lstlisting}
     for (;;)
     {
         int c = uart_getc_polled();
@@ -552,7 +552,7 @@ void kprintf(const char *fmt, ...);
     \item \textbf{\texttt{va\_end(ap)}:} This cleans up the cursor. While on some architectures (like our Cortex-M3) it might do nothing behind the scenes, it is strictly mandatory for C standard compliance and prevents memory corruption on more complex systems.
 \end{itemize}
 
-\begin{lstlisting}[language=C]
+\begin{lstlisting}
 #include <stdarg.h>
 
 void kprintf(const char *fmt, ...)
@@ -578,7 +578,7 @@ Turning \texttt{"x=\%d"} and \texttt{42} into \texttt{x=42} is the same work whe
 
 To maintain a clean operating system architecture, we separate the formatting engine from the hardware driver using a function called \texttt{vformat} (implemented in \texttt{lib/format.c}). 
 
-\begin{lstlisting}[language=C]
+\begin{lstlisting}
 void vformat(void (*out)(char c, void *ctx), void *ctx,
              const char *fmt, va_list ap);
 \end{lstlisting}
@@ -602,7 +602,7 @@ In \texttt{lib/format.c}, replace the marker line \texttt{/* CLASS: vformat (the
 
 The helper, \texttt{put\_string}, sends every character of a string to \texttt{out}:
 
-\begin{lstlisting}[language=C]
+\begin{lstlisting}
 static void put_string(void (*out)(char c, void *ctx), void *ctx,
                        const char *s)
 {
@@ -616,7 +616,7 @@ static void put_string(void (*out)(char c, void *ctx), void *ctx,
 
 \texttt{vformat} walks through the format string. An ordinary character is passed on; a \texttt{\%} makes it look at the next letter and take one argument of the right type:
 
-\begin{lstlisting}[language=C]
+\begin{lstlisting}
 void vformat(void (*out)(char c, void *ctx), void *ctx,
              const char *fmt, va_list ap)
 {
@@ -687,7 +687,7 @@ Any operating system that implements hardware protection features both a user-si
 In \texttt{kernel/kprintf.c}, we write a small wrapper function that connects \texttt{vformat} to our polled UART driver.
 
 First, we define the callback function that \texttt{vformat} expects. This simply takes a character and hands it to the hardware driver:
-\begin{lstlisting}[language=c]
+\begin{lstlisting}
 #include "kernel/kprintf.h"
 #include "lib/format.h"
 #include "drivers/uart.h"
@@ -703,7 +703,7 @@ static void kprintf_out( char c, void *ctx ){
 The \texttt{vformat} engine expects its output function to accept two arguments: the character to print and the context pointer (\texttt{ctx}). Our \texttt{kprintf\_out} function must accept both to match the required signature, even though a simple polled UART driver does not need any context state. Writing \texttt{(void) ctx;} is a standard C idiom: it explicitly tells the compiler that the parameter is intentionally ignored, suppressing the 'unused parameter' warning during compilation.
 
 Then, we implement the variadic \texttt{kprintf} function itself. It collects its extra arguments into a \texttt{va\_list} and hands everything over to \texttt{vformat}, setting \texttt{kprintf\_out} as the destination and \texttt{0} (NULL) as the context:
-\begin{lstlisting}[language=c]
+\begin{lstlisting}
 void kprintf( const char *fmt, ... )
 {
     va_list ap;
@@ -719,7 +719,7 @@ Notice that \texttt{kprintf} itself does not call \texttt{va\_arg} to read the a
 Because \texttt{kprintf} relies on our polled UART driver, it operates entirely without hardware interrupts. This is a massive architectural advantage: it means \texttt{kprintf} can be safely executed anywhere in the kernel, even inside a catastrophic \texttt{HardFault} handler where interrupts are strictly disabled.
 
 To test every conversion, we can add a test line in \texttt{src/main.c}:
-\begin{lstlisting}[language=c]
+\begin{lstlisting}
 kprintf( "c=%c s=%s d=%d u=%u x=%x pct=%%\n", 
                 'A', "hi", -42, 4000000000u, 0xBEEFu );
 \end{lstlisting}
@@ -749,7 +749,7 @@ escalated to HardFault.
 
 \subsection{Implementing the New Handlers}
 In \texttt{kernel/faults.c}, we include the necessary headers and replace the silent loops with explicit print statements before halting:
-\begin{lstlisting}[language=c]
+\begin{lstlisting}
 #include "cmsdk.h"
 #include "kernel/kprintf.h"
 
@@ -775,7 +775,7 @@ void UsageFault_Handler(void) {
 To test this new capability, we can intentionally crash the OS. Week 2's \texttt{Reset\_Handler} set the \texttt{DIV\_0\_TRP} bit in the CCR, meaning an integer division by zero strictly triggers a hardware fault. 
 
 Add the following temporary code to \texttt{src/main.c}:
-\begin{lstlisting}[language=c]
+\begin{lstlisting}
 volatile unsigned zero = 0;     /* read at run time */
 kprintf( "%u\n", 10u / zero );  /* should fault     */
 \end{lstlisting}
@@ -793,7 +793,1028 @@ As we build these low-level layers, the codebase is becoming increasingly comple
 
 From an academic and practical standpoint, it is critical to understand how to navigate this project structure. During an exam (or in a real-world debugging scenario), you will not be asked to write a full operating system from scratch in 90 minutes. Instead, you will typically be given an existing, structured project and asked to implement a specific function, fix a bug, or integrate a new hardware feature. Mastering how to read the existing code, locate the correct files, and understand the flow of execution is just as important as understanding the hardware registers themselves.
 
+
+\section{Unit 2: Calling Convention and Interrupts}
+Up to this point, our entire OS relies on \textbf{polling}. The \texttt{uart\_putc\_polled} driver explicitly reads the hardware \texttt{STATE} register in an infinite loop until the transmitter has room.
+
+\subsection{Polling versus Interrupts}
+While polling is easy to implement, it is unsustainable for a real operating system. The alternative is an \textbf{interrupt}: the hardware device sends a physical signal only when it actually needs attention. The CPU pauses instantly, runs a special function called a \textit{handler}, and then resumes exactly where it left off.
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{p{2.5cm}p{5.5cm}p{6cm}}
+        \toprule
+        & \textbf{Polling} & \textbf{Interrupts} \\
+        \midrule
+        \textbf{CPU Time} & Wasted in an empty waiting loop. & Used only when the event actually occurs. \\
+        \textbf{Latency} & Up to one full loop iteration. & The exception entry time ($\sim$12 cycles on Cortex-M3). \\
+        \textbf{Complexity} & Trivial; a single loop. & Complex: requires handlers, data protection, and priority management. \\
+        \textbf{CPU State} & Constantly locked at 100\% usage. & Free to run applications or enter sleep mode. \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+To understand the real cost of polling: sending 10 bits at 115,200 baud takes about 87~$\mu$s. At our board's 25~MHz clock, that equals \textbf{2,170 clock cycles}. With polling, the CPU wastes all these cycles just spinning and doing nothing. 
+
+However, polling remains vital when interrupts cannot work. This is why our \texttt{kprintf} will stay polled: it must guarantee output even when the system crashes inside a \texttt{HardFault} (where normal interrupts are strictly blocked).
+
+\subsection{The AAPCS: How C Calls Functions}
+To make C and Assembly code work together, both must follow strict rules on how to exchange data. For the ARM architecture, this standard is the \textbf{AAPCS} (Procedure Call Standard for the Arm Architecture).
+
+The standard assigns precise roles to the CPU registers:
+\begin{itemize}
+    \item \textbf{\texttt{r0--r3}:} Carry the first four parameters of a function. The \texttt{r0} register also holds the final return value. These are \textbf{Caller-Saved} (scratch) registers: the called function can overwrite them freely without asking for permission.
+    \item \textbf{\texttt{r4--r11}:} Reserved for the function's local variables. These are \textbf{Callee-Saved}: if a function uses them, it is strictly required to back them up (via \texttt{push}) and restore them (\texttt{pop}) before returning.
+    \item \textbf{\texttt{r12}:} A temporary scratch register, strictly \textbf{Caller-Saved}.
+    \item \textbf{\texttt{lr} (Link Register):} Holds the address the CPU must return to when the function ends. Since it is \textbf{Caller-Saved}, if a function calls another function, it must save its own \texttt{lr} first.
+    \item \textbf{\texttt{sp} (Stack Pointer):} The stack memory address must always remain a multiple of 8 at every function boundary.
+\end{itemize}
+
+\subsection{Managing Interrupts from Assembly: The PRIMASK}
+Before handling specific hardware interrupts, the OS needs a main switch to globally enable or disable the CPU's ability to listen. The Cortex-M3 has a special 1-bit register called \textbf{PRIMASK}. When \texttt{PRIMASK} is \texttt{1}, all configurable interrupts are masked (blocked); when \texttt{0}, the CPU is listening.
+
+Standard C cannot touch the CPU's internal registers. We must use specific Assembly instructions:
+\begin{itemize}
+    \item \texttt{mrs r0, primask}: Reads the value of \texttt{PRIMASK} and saves it into \texttt{r0}.
+    \item \texttt{msr primask, r0}: Writes the content of \texttt{r0} into \texttt{PRIMASK}.
+    \item \texttt{cpsid i} / \texttt{cpsie i}: Quick instructions to disable (\textit{disable}) or enable (\textit{enable}) global interrupts.
+\end{itemize}
+
+\subsubsection{The Nesting Problem}
+A naive approach to protecting a critical section of code is to use \texttt{cpsid i} at the start and \texttt{cpsie i} at the end. However, if a function that disables interrupts calls another function that does the same, the inner function will turn the interrupts back on when it finishes, destroying the protection of the outer function way too early.
+
+The correct solution requires functions to save the previous state before changing it:
+\begin{lstlisting}
+uint32_t irq_save( void );         /* Blocks interrupts and returns the old PRIMASK */
+void irq_restore( uint32_t old );  /* Restores PRIMASK to the saved state */
+\end{lstlisting}
+This way, even with nested calls, interrupts will only be truly re-enabled when the outermost function restores the original \texttt{0} value.
+
+\subsubsection{Implementing \texttt{irq\_save} and \texttt{irq\_restore} in Assembly}
+We create these two functions in \texttt{kernel/irq.s}. Following the AAPCS, \texttt{irq\_save} must place the old value into the \texttt{r0} register before returning to C. Both functions only use \texttt{r0} and \texttt{lr} (which are Caller-Saved), so we do not need to use \texttt{push} or \texttt{pop}.
+
+\begin{lstlisting}
+    .syntax unified             /* Modern ARM syntax */
+    .cpu cortex-m3              /* Limit to our chip's instructions */
+    .thumb                      /* Use the Thumb instruction set */
+    .section .text,"ax",%progbits
+
+/* uint32_t irq_save(void) */
+    .global irq_save            /* Make the name visible to the C linker */
+    .type irq_save, %function   /* Declare this as executable code */
+    .thumb_func                 
+irq_save:
+    mrs r0, primask             /* Save the old PRIMASK in r0 (return value) */
+    cpsid i                     /* Set PRIMASK to 1 (mask interrupts) */
+    bx lr                       /* Return to C */
+    .size irq_save, . - irq_save
+
+/* void irq_restore(uint32_t old) */
+    .global irq_restore         
+    .type irq_restore, %function 
+    .thumb_func                 
+irq_restore:
+    msr primask, r0             /* Restore PRIMASK by reading it from r0 (the parameter) */
+    bx lr                       /* Return to C */
+    .size irq_restore, . - irq_restore
+\end{lstlisting}
+
+\subsubsection{Testing the API in C}
+Let's define the prototypes in \texttt{kernel/irq.h}:
+
+\begin{lstlisting}
+#ifndef IRQ_H
+#define IRQ_H
+#include <stdint.h>
+
+uint32_t irq_save(void);
+void irq_restore(uint32_t state);
+
+#endif
+\end{lstlisting}
+
+And test them inside \texttt{src/main.c}:
+
+\begin{lstlisting}
+#include "kernel/irq.h"
+
+/* Inside main() */
+uint32_t old_state = irq_save();      /* Save current state and block interrupts */
+
+/* --- CRITICAL SECTION START ---
+   In here, interrupts are safely blocked.
+   ------------------------------ */
+
+irq_restore(old_state);               /* Restore the previous state */
+
+kprintf("PRIMASK before irq_save was: %u\n", old_state);
+\end{lstlisting}
+
+Execution will print \texttt{0}. This confirms the CPU started with interrupts enabled, our assembly safely disabled and cleanly restored them, communicating perfectly with the C code.
+
+\subsubsection{Inspecting the AAPCS with GDB}
+You can watch live how data travels between C and Assembly using GDB:
+\begin{lstlisting}[language=bash]
+(gdb) break irq_save
+(gdb) continue
+(gdb) p/x $lr
+(gdb) info registers primask
+(gdb) finish
+(gdb) info registers r0 primask
+\end{lstlisting}
+
+At the breakpoint, the \texttt{lr} (Link Register) contains the return address generated by C, and \texttt{PRIMASK} is \texttt{0}. The \texttt{finish} command runs the assembly function to completion. By checking the registers again, you will see that \texttt{r0} now contains the old state (\texttt{0x0}) and \texttt{PRIMASK} has flipped to \texttt{1} (interrupts disabled). Everything moved exactly as dictated by the AAPCS rules.
+
+\section{ARM Exception Entry and Return Mechanics}
+While we can wrap many features in simple C functions, handling exceptions requires a deep understanding of what the Cortex-M hardware does autonomously. When a hardware interrupt fires, the CPU abruptly pauses the current execution to jump to an Exception Handler. Before executing the handler's first instruction, the hardware performs three critical operations:
+\begin{enumerate}
+    \item It pushes exactly 8 words (the exception frame) onto the current stack.
+    \item It writes a special signature value, called \texttt{EXC\_RETURN}, into the Link Register (\texttt{lr}).
+    \item It reads the specific handler's memory address from the vector table and branches to it, automatically elevating to privileged Handler mode.
+\end{enumerate}
+
+\subsection{The Automatic Hardware State Save (Stacking)}
+The 8 words pushed to the stack form the stacked frame. Because the stack grows downwards, the hardware creates the following memory layout relative to the new Stack Pointer (\texttt{sp}):
+\begin{itemize}
+    \item \texttt{sp + 28}: \texttt{xPSR} (Status flags, Thumb bit)
+    \item \texttt{sp + 24}: \texttt{PC} (Program Counter: where the interrupted code will resume)
+    \item \texttt{sp + 20}: \texttt{LR} (The interrupted code's Link Register)
+    \item \texttt{sp + 16}: \texttt{r12}
+    \item \texttt{sp + 12}: \texttt{r3}
+    \item \texttt{sp +  8}: \texttt{r2}
+    \item \texttt{sp +  4}: \texttt{r1}
+    \item \texttt{sp +  0}: \texttt{r0} $\leftarrow$ \texttt{sp} when the handler starts
+\end{itemize}
+
+Crucially, these registers (\texttt{r0}--\texttt{r3}, \texttt{r12}, and \texttt{lr}) perfectly match the AAPCS \textit{Caller-Saved} set. Because \texttt{r4}--\texttt{r11} are \textit{Callee-Saved}, any standard C function invoked during the interrupt will safely preserve them before modifying them. Together, the hardware stacking and the AAPCS software rules guarantee that the interrupted application finds all its registers entirely unmodified upon return. This elegant design allows an interrupt handler to be written as a standard C function (e.g., \texttt{void SysTick\_Handler(void)}) without requiring specialized assembly wrappers or keywords. Additionally, the hardware ensures the stack pointer remains 8-byte aligned upon entry, adhering to the \texttt{STKALIGN} bit configured in the CCR during boot.
+
+\subsection{Exception Return: \texttt{EXC\_RETURN}}
+Inside the exception handler, the \texttt{lr} does not contain a standard return memory address. Instead, it holds the \texttt{EXC\_RETURN} value, which begins with \texttt{0xFFFFFF...}---an address region deliberately containing no executable code. When the handler concludes and executes a return instruction (like \texttt{bx lr} or \texttt{pop \{..., pc\}}), the CPU hardware intercepts this special value and initiates an \textbf{exception return}. It pops the 8-word frame from the stack, reverts to the previous execution mode, and seamlessly resumes at the stacked \texttt{PC}.
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{lll}
+        \toprule
+        \textbf{\texttt{EXC\_RETURN}} & \textbf{Return To} & \textbf{Stack Used} \\
+        \midrule
+        \texttt{0xFFFFFFF9} & Thread mode (normal code, e.g., \texttt{main}) & Main stack \\
+        \texttt{0xFFFFFFF1} & Handler mode (returning to a preempted handler) & Main stack \\
+        \texttt{0xFFFFFFFD} & Thread mode & Process stack \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+While the Cortex-M supports a secondary Process Stack Pointer, this kernel exclusively uses the Main stack for now. Therefore, returning to Thread mode will consistently utilize \texttt{0xFFFFFFF9}. The compiled C handler ends with an ordinary \texttt{bx lr}; the magic lies entirely in the value held within the Link Register.
+
+\subsection{Tail-Chaining and Late Arrival}
+To optimize back-to-back exceptions, the hardware utilizes two advanced mechanisms that require no software intervention:
+\begin{itemize}
+    \item \textbf{Tail-chaining:} If a handler completes while another exception is pending, the CPU skips the redundant process of popping the 8-word frame only to immediately push it again. Instead, it branches directly to the pending handler, reducing latency to about 6 cycles (down from 24) on a Cortex-M3.
+    \item \textbf{Late arrival:} If a higher-priority exception arrives while the CPU is actively stacking the frame for a lower-priority exception, the CPU simply uses the partially completed frame, executes the higher-priority handler first, and then tail-chains to the lower-priority one.
+\end{itemize}
+In both scenarios, the single stacked frame explicitly describes the original code that was preempted.
+
+\section{The Heartbeat of the OS: The SysTick Timer}
+To build an operating system capable of measuring time and preempting tasks, a periodic interrupt is mandatory. The \textbf{SysTick} timer is a 24-bit down-counter permanently integrated into every Cortex-M core, mapped to the exact same memory addresses across all chips.
+
+\subsection{Hardware Preemption}
+If an OS relies entirely on cooperative software, an infinite loop in a user program would permanently hijack the CPU, deadlocking the system. SysTick prevents this through \textbf{hardware preemption}. By periodically firing an interrupt (e.g., every 10~ms), the hardware forcefully pauses the current execution and jumps to the kernel's \texttt{SysTick\_Handler}. This guarantees the OS regains control at fixed intervals to update the system clock, perform scheduling, or terminate rogue tasks. A hardware interrupt is the only mechanism powerful enough to definitively stop the CPU.
+
+\subsection{The SysTick Hardware Registers}
+The timer operates by counting down from a configured \texttt{LOAD} value to 0, reloading the \texttt{LOAD} value on the subsequent clock cycle. Consequently, exactly one period equals $\text{LOAD} + 1$ cycles.
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{llp{9cm}}
+        \toprule
+        \textbf{Register} & \textbf{Address} & \textbf{Function} \\
+        \midrule
+        \textbf{\texttt{CTRL}} & \texttt{0xE000E010} & Bit 0: \textbf{ENABLE} the counter. Bit 1: \textbf{TICKINT} (raise the SysTick exception at 0). Bit 2: \textbf{CLKSOURCE} (1 = processor clock). Bit 16: \textbf{COUNTFLAG} (reads 1 if 0 was reached since last read). \\
+        \textbf{\texttt{LOAD}} & \texttt{0xE000E014} & 24-bit reload value (maximum \texttt{0xFFFFFF}). \\
+        \textbf{\texttt{VAL}} & \texttt{0xE000E018} & Current count. Writing any value resets it to 0. \\
+        \textbf{\texttt{CALIB}} & \texttt{0xE000E01C} & Read-only calibration data. Bits 23--0 (\textbf{TENMS}) hold the reload value for 10~ms on the reference clock. \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+To initiate the timer, three stores are required:
+\begin{lstlisting}
+SysTick->LOAD = 249999;          /* period: 250,000 cycles 
+                                    (10 ms at 25 MHz) */
+SysTick->VAL  = 0;               /* start from a clean count */
+SysTick->CTRL = SysTick_CTRL_ENABLE | 
+        SysTick_CTRL_TICKINT | SysTick_CTRL_CLKSOURCE; /* = 7 */
+\end{lstlisting}
+
+The SysTick priority is configured using the \texttt{SHPR} byte (set to \texttt{0xE0} during boot), ensuring it is the least urgent exception in the system. It requires no interrupt-controller setting and no explicit hardware acknowledgment; its pending state clears automatically when the handler starts. While the \texttt{CALIB} register allows portable code to achieve a 10~ms tick without knowing the board speed, we know our processor clock is 25~MHz, so we explicitly calculate the \texttt{LOAD} value using \texttt{CLKSOURCE = 1}.
+
+\subsection{Building the SysTick Driver}
+To integrate this hardware into our OS, we write a device driver, structured similarly to the UART driver. The API exposed in \texttt{drivers/systick.h} includes initialization and time-tracking functions:
+
+\begin{lstlisting}
+void systick_init(void);
+uint32_t systick_uptime_ms(void);
+\end{lstlisting}
+
+\subsubsection{Choosing the Tick: Reload Value and Rate}
+The formula for the reload value is \textbf{LOAD = (f / rate) - 1}. With our processor frequency ($f$) at 25~MHz, if we want an interrupt frequency (rate) of 100~Hz (which equals 100 ticks per second, or one tick every 10~ms), the calculation is:
+$$ \text{LOAD} = \frac{25,000,000}{100} - 1 = 249,999 $$
+This value (\texttt{0x3D08F}) easily fits within the 24-bit limit of the \texttt{LOAD} register.
+
+Choosing the tick rate is a fundamental OS design trade-off:
+\begin{itemize}
+    \item A faster tick (e.g., 1~ms / 1,000~Hz) measures time more precisely but forces the CPU to process 1,000 exception entries and exits per second, wasting significant CPU time even when the system is idle.
+    \item A slower tick (e.g., 10~ms / 100~Hz) reduces interrupt overhead but lowers timing resolution.
+\end{itemize}
+Our kernel utilizes the classic \textbf{10~ms (100~Hz)} rate. In QEMU, this specific rate also has the practical benefit of keeping exact time against a physical wall clock, whereas a 1~ms tick runs approximately 26\% slower in real-world time due to emulation overhead.
+
+\subsubsection{Uptime in Milliseconds and Wraparound Safety}
+In \texttt{drivers/systick.c}, we maintain a global counter tracking the uptime in milliseconds. 
+\begin{lstlisting}
+#include "drivers/systick.h"
+#include "cmsdk.h"
+
+#define CPU_CLOCK_HZ 25000000UL     /* processor clock: 25 MHz */
+#define TICK_MS 10
+
+static volatile uint32_t uptime_ms; /* changed by the handler */
+
+void systick_init( void )
+{
+    uptime_ms = 0;
+    SysTick->LOAD = CPU_CLOCK_HZ / ( 1000 / TICK_MS ) - 1;
+    SysTick->VAL = 0;               /* any write: counter = 0 */
+    SysTick->CTRL = SysTick_CTRL_ENABLE | SysTick_CTRL_TICKINT | SysTick_CTRL_CLKSOURCE;
+}
+
+void SysTick_Handler( void )
+{
+    uptime_ms += TICK_MS;           /* no acknowledge needed */
+}
+
+uint32_t systick_uptime_ms( void )
+{
+    return uptime_ms;               /* one 32-bit read: never torn */
+}
+\end{lstlisting}
+
+The variable \texttt{uptime\_ms} is strictly declared \texttt{volatile} because the \texttt{SysTick\_Handler} updates it entirely asynchronously. The getter function \texttt{systick\_uptime\_ms} performs a single 32-bit read, which is architecturally guaranteed to be atomic.
+
+Because \texttt{uptime\_ms} is a \texttt{uint32\_t}, it wraps from \texttt{0xFFFFFFFF} back to 0 after approximately 49.7 days. To safely measure elapsed time without wraparound bugs, the system must \textit{always} use unsigned subtraction:
+\begin{lstlisting}
+if (now - start >= delay) { /* Safe */ }
+\end{lstlisting}
+If \texttt{start = 0xFFFFFF00} and the counter wraps such that \texttt{now = 0x00000064} (100), the calculation \texttt{now - start} safely evaluates to \texttt{0x164} (356 ms) thanks to modulo $2^{32}$ arithmetic.
+
+\subsubsection{\texttt{wfi}: An Idle Loop That Sleeps}
+With the hardware timer firing every 10~ms, we can efficiently halt the CPU when it has no immediate work using the \texttt{wfi} (Wait For Interrupt) assembly instruction. 
+\begin{lstlisting}
+for ( ;; ) {
+    __asm volatile ( "wfi" );  /* sleep until the next interrupt */
+    /* ... check whether something has to be done ... */
+}
+\end{lstlisting}
+The \texttt{wfi} instruction instantly puts the processor into a low-power sleep state until any exception is pending. Instead of a polling loop running millions of useless checks per second, a \texttt{wfi} loop executes exactly once per interrupt, ensuring the OS remains highly responsive while saving power.
+
+\section{The Nested Vectored Interrupt Controller (NVIC)}
+While SysTick is an exception generated internally by the CPU core, interrupts from external peripherals (like the UART or timers on the APB bus) are managed by the \textbf{NVIC} (Nested Vectored Interrupt Controller). Acting as a gatekeeper and priority manager, the NVIC sits between these peripherals and the CPU.
+
+On this specific board, the NVIC handles 32 interrupt lines (\textbf{IRQ 0 to IRQ 31}). For example, UART0 RX is mapped to IRQ 0, and UART0 TX to IRQ 1. 
+
+Following the ARM Cortex-M architecture, an \textbf{IRQ $n$ maps to exception number $16 + n$}. Its handler address in the vector table is therefore located at offset $4 \times (16 + n)$. For UART0 TX (IRQ 1), this is exception 17, located at address \texttt{0x44}.
+
+The NVIC is configured via memory-mapped registers. Since this board only uses 32 IRQ lines, each of these control registers is a single 32-bit word, where bit $n$ controls IRQ $n$:
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{llp{8.5cm}}
+        \toprule
+        \textbf{Register} & \textbf{Address} & \textbf{Function (For IRQ $n$)} \\
+        \midrule
+        \textbf{\texttt{ISER}} & \texttt{0xE000E100} & \textbf{Interrupt Set-Enable.} Writing 1 to bit $n$ enables the IRQ line. Writing 0 has no effect. \\
+        \textbf{\texttt{ICER}} & \texttt{0xE000E180} & \textbf{Interrupt Clear-Enable.} Writing 1 to bit $n$ disables the IRQ line. Writing 0 has no effect. \\
+        \textbf{\texttt{ISPR}} & \texttt{0xE000E200} & \textbf{Interrupt Set-Pending.} Writing 1 to bit $n$ forces the IRQ into a pending state (software interrupt). \\
+        \textbf{\texttt{IPR}}  & \texttt{0xE000E400} & \textbf{Interrupt Priority.} Configures the priority level. Only the upper bits are implemented; a lower value means a higher urgency. \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+To configure the priority and enable UART0 TX, we execute two direct memory stores. Because hardware ignores 0s written to \texttt{ISER}, we avoid less efficient read-modify-write (\texttt{|=}) operations:
+
+\begin{lstlisting}
+NVIC->IPR[UART0TX_IRQn] = 0xC0;                               /* Set priority of IRQ 1 */
+NVIC->ISER[UART0TX_IRQn / 32] = 1UL << (UART0TX_IRQn % 32);   /* Enable IRQ 1 (standard CMSIS macro) */
+\end{lstlisting}
+
+\subsection{The Three Gates of Interrupt Firing}
+An external device's interrupt will only reach the CPU if it successfully passes through three independent conditions, known as the \textit{three gates}:
+\begin{enumerate}
+    \item \textbf{The Device Gate:} The peripheral is explicitly configured to generate interrupts (e.g., setting \texttt{TXIRQEN} or \texttt{RXIRQEN} in the UART \texttt{CTRL} register).
+    \item \textbf{The NVIC Gate:} The specific IRQ line is unmasked and enabled in the NVIC (via \texttt{ISER}).
+    \item \textbf{The CPU Gate:} Global interrupts are enabled (\texttt{PRIMASK = 0}), and the incoming interrupt has a \textit{strictly higher} priority than the currently executing code.
+\end{enumerate}
+Missing either of the first two gates produces the exact same symptom: the interrupt is completely ignored.
+
+\subsubsection*{The Golden Rule: Hardware Acknowledgment}
+NVIC lines are \textbf{level-sensitive}. A peripheral continuously asserts its IRQ line as long as its internal interrupt flag (e.g., bit 0 of UART \texttt{INTSTATUS}) remains set. 
+
+This dictates the Golden Rule of Interrupts: \textbf{software must acknowledge and clear the hardware flag at the device level before returning}. 
+
+If the handler executes a return (\texttt{bx lr}) without clearing this flag, the NVIC still sees the asserted line and immediately fires the interrupt again, permanently trapping the OS in an infinite loop. 
+
+Acknowledgment typically involves reading a \texttt{DATA} register or writing a 1 to a specific clear-bit. For example, \texttt{INTSTATUS} uses write-1-to-clear logic: executing \texttt{CMSDK\_UART0->INTSTATUS = UART\_INT\_TX;} clears bit 0 and leaves other flags intact. (Note: SysTick, being a core exception rather than a peripheral, clears its own flag automatically upon execution).
+
+\subsubsection*{Shared Interrupt Lines (Q\&A)}
+While hardware designers typically map one device to one dedicated IRQ line, complex systems might route multiple devices to a single shared NVIC line to save resources. Because the CPU only sees a single asserted wire, the software handler must manually poll the status registers of \textit{every} device sharing that line to determine which one triggered the interrupt, service it, and clear its specific flag.
+
+\section{Expanding the Vector Table for External Devices}
+The base's \texttt{boot/startup.s} allocates 16 core slots plus 32 hardware IRQs, totaling 48 words (192 bytes, or \texttt{0xC0}). 
+
+Devices are assigned specific names (e.g., \texttt{UART0TX\_Handler} is IRQ 1 at word 17; \texttt{TIMER0\_Handler} is IRQ 8 at word 24). Unused slots point to a \texttt{Default\_Handler}. Each handler name uses \texttt{.weak} and \texttt{.thumb\_set} directives: this allows a C function defined with the identical name to automatically override the weak default handler.
+
+You can verify this in GDB: examining \texttt{x/4wx 0x40} (slots 16--19) reveals identical words pointing to \texttt{Default\_Handler} (plus 1 for the Thumb state).
+
+\section{Concurrency and Shared Data}
+
+When we enable hardware interrupts, we introduce \textbf{concurrency}. An interrupt can literally pause the \texttt{main} program at any given nanosecond---even right in the middle of a simple C instruction. This forces us to carefully manage how the main program and the interrupt handlers share memory.
+
+\subsection{The Problem: Race Conditions}
+Imagine the \texttt{main} loop and an interrupt handler both want to update a shared variable by doing \texttt{count++}. While it looks like a single step in C, the CPU actually performs three separate assembly instructions:
+
+\begin{lstlisting}
+ldr  r1, [r0]      /* 1. READ: load current value (e.g., 5) into r1 */
+                   /* --- WHAT IF AN INTERRUPT FIRES RIGHT HERE? --- */
+adds r1, r1, #1    /* 2. ADD: increment r1 to 6 */
+str  r1, [r0]      /* 3. WRITE: store 6 back into memory */
+\end{lstlisting}
+
+If an interrupt fires exactly after the read step, the handler might run, increment \texttt{count} to 6, and return. But the \texttt{main} program, completely unaware, resumes its sequence holding the old, stale value. It will calculate $5 + 1 = 6$ and write it back, effectively overwriting and erasing the handler's work. This is a \textbf{race condition}, resulting in a \textbf{lost update}.
+
+\subsection{The Solution: Critical Sections}
+To protect shared data, we must create a \textbf{critical section}: a small block of code where the CPU temporarily ignores interrupts. We do this using our \texttt{irq\_save()} and \texttt{irq\_restore()} functions.
+
+Three golden rules apply here:
+\begin{enumerate}
+    \item \textbf{Asymmetry:} An interrupt handler cannot be interrupted by \texttt{main}. Therefore, only the \texttt{main} program needs to protect itself by masking interrupts.
+    \item \textbf{Brevity:} Keep the critical section as short as possible. Do not put delays or loops inside it. If an interrupt arrives during this time, the hardware will safely keep it "pending" until you restore the mask.
+    \item \textbf{Proper Nesting:} Always end with \texttt{irq\_restore(s)} instead of a raw "enable" instruction. This safely restores the \textit{previous} state, in case the function was called from another already-protected section.
+\end{enumerate}
+
+\subsection{The Ring Buffer (Circular Queue)}
+To send a long text message asynchronously, \texttt{main} needs a place to "drop off" the characters so the handler can pick them up later. The best structure for this is a \textbf{ring buffer}: an array that wraps around itself like a circle.
+
+We define this in the internal state of our UART driver (\textbf{File: \texttt{drivers/uart.c}}):
+\begin{lstlisting}
+/* File: drivers/uart.c */
+#define TX_BUF_SIZE 64
+
+static volatile char tx_buf[TX_BUF_SIZE];
+static volatile unsigned tx_head = 0; /* Written ONLY by main (Producer) */
+static volatile unsigned tx_tail = 0; /* Written ONLY by handler (Consumer) */
+static volatile int tx_busy = 0;
+\end{lstlisting}
+
+The math relies on keeping \texttt{TX\_BUF\_SIZE} a power of two (like 64). This turns the slow modulo division (\texttt{\%}) into a lightning-fast bitwise AND (\texttt{\&}):
+\begin{itemize}
+    \item \textbf{Next index:} \texttt{(i + 1) \& (TX\_BUF\_SIZE - 1)}
+    \item \textbf{Buffer Empty:} \texttt{head == tail}
+    \item \textbf{Buffer Full:} \texttt{((head + 1) \& (TX\_BUF\_SIZE - 1)) == tail}
+\end{itemize}
+Notice that out of 64 slots, we can only safely use \textbf{63}. We purposely leave one slot permanently empty so the "full" state never mathematically looks like the "empty" state.
+
+\subsection{Interrupt-Driven Transmission}
+Now we rewrite our UART driver to use the ring buffer. The workload is split into two parts: a \textbf{Producer} (the main program) and a \textbf{Consumer} (the hardware interrupt).
+
+\subsubsection{The Producer: \texttt{uart\_write}}
+This function is called by the application to send text. Its job is to safely shove as many characters as possible into the ring buffer. 
+
+It also has one vital responsibility called the \textbf{Priming Rule}. If the UART hardware is currently idle, it isn't generating any interrupts. We must "prime the pump" by manually turning the interrupt on and sending the very first character. 
+
+\begin{lstlisting}
+/* File: drivers/uart.c */
+unsigned uart_write(const char *buf, unsigned len)
+{
+    unsigned accepted = 0;
+    
+    /* CRITICAL SECTION START: Mask interrupts */
+    uint32_t saved = irq_save(); 
+
+    /* 1. Fill the buffer as much as possible */
+    while (accepted < len && !tx_full()) {
+        tx_buf[tx_head] = buf[accepted];
+        tx_head = (tx_head + 1) & (TX_BUF_SIZE - 1);
+        accepted++;
+    }
+
+    /* 2. The Priming Rule: Kickstart the hardware if it's asleep */
+    if (!tx_busy && !tx_empty()) {
+        /* FIRST: Enable the hardware interrupt */
+        CMSDK_UART0->CTRL |= UART_CTRL_TXIRQEN; 
+        
+        /* Wait just in case a previous byte is still physically leaving */
+        while (CMSDK_UART0->STATE & UART_STATE_TXBF) {} 
+        
+        /* THEN: Write the first byte to trigger the cycle */
+        CMSDK_UART0->DATA = (uint32_t)(unsigned char)tx_pop(); 
+        tx_busy = 1;
+    }
+
+    /* CRITICAL SECTION END: Restore interrupts */
+    irq_restore(saved); 
+    
+    return accepted; /* Tell main how many bytes actually fit */
+}
+\end{lstlisting}
+
+\subsubsection{The Consumer: \texttt{UART0TX\_Handler}}
+The handler wakes up completely automatically every time a character successfully leaves the hardware. Since it is an interrupt, it inherently blocks \texttt{main} from running, so it doesn't need \texttt{irq\_save()}.
+
+Its logic is simple: Acknowledge the hardware, fetch the next byte from the tail of the buffer, and send it. If there's nothing left, turn the lights off and go to sleep.
+
+\begin{lstlisting}
+/* File: drivers/uart.c (or kernel/handlers.c depending on your architecture) */
+void UART0TX_Handler(void)
+{
+    /* 1. Acknowledge the interrupt at the hardware level (Write 1 to Clear) */
+    CMSDK_UART0->INTSTATUS = UART_INT_TX; 
+
+    /* 2. Is there more data waiting in the ring buffer? */
+    if (!tx_empty()) {
+        /* Yes: Send the next byte */
+        CMSDK_UART0->DATA = (uint32_t)(unsigned char)tx_pop(); 
+    } else {
+        /* No: Turn off the TX interrupt and mark as idle */
+        CMSDK_UART0->CTRL &= ~UART_CTRL_TXIRQEN;  
+        tx_busy = 0;                              
+    }
+}
+\end{lstlisting}
+
+\subsubsection{Initialization: \texttt{uart\_init}}
+During system boot, we must set up the buffer state and configure the NVIC priorities. We assign this interrupt a priority of \texttt{0xC0} (lower urgency than System Calls, but higher than the SysTick timer).
+
+\begin{lstlisting}
+/* File: drivers/uart.c */
+void uart_init(void)
+{
+    /* ... (standard baud rate setup) ... */
+
+    /* Reset the ring buffer state */
+    tx_head = 0; 
+    tx_tail = 0; 
+    tx_busy = 0;
+
+    /* Set Priority to 0xC0 */
+    NVIC->IPR[UART0TX_IRQn] = 0xC0;
+    
+    /* Enable IRQ 1 (UART0 TX) in the NVIC Gate */
+    NVIC->ISER[UART0TX_IRQn / 32] = 1UL << (UART0TX_IRQn % 32);
+}
+\end{lstlisting}
+
+\subsection{Testing the Driver}
+To prove this works, let's try to send 160 bytes of text. Since our buffer can only hold 63 bytes at a time, \texttt{uart\_write} will inevitably fill it up and return early. 
+
+Instead of polling in a busy loop and wasting CPU cycles, we use the \textbf{\texttt{wfi} (Wait For Interrupt)} instruction to put the processor to sleep. Every time the handler finishes sending a byte, it wakes the CPU up, allowing us to check if there is room for the rest of the text.
+
+\begin{lstlisting}
+/* File: src/main.c */
+#include "drivers/uart.h"
+
+/* 4 lines of 40 bytes = 160 bytes total (too big for the 64-byte buffer) */
+static const char msg[] =
+    "line 1: the quick brown fox jumps over.\n"
+    "line 2: the quick brown fox jumps over.\n"
+    "line 3: the quick brown fox jumps over.\n"
+    "line 4: the quick brown fox jumps over.\n";
+
+int main(void)
+{
+    uart_init();
+    
+    const char *p = msg;
+    unsigned left = sizeof(msg) - 1; /* Ignore the null terminator */
+
+    while (left > 0) {
+        /* Try to shove as much as possible into the buffer */
+        unsigned n = uart_write(p, left); 
+        
+        p += n;       /* Move the pointer forward by 'n' bytes */
+        left -= n;    /* Decrease the remaining bytes count */
+        
+        /* If the buffer was completely full (0 bytes accepted)... */
+        if (n == 0) {
+            /* Go to sleep! The UART handler will wake us up 
+               when it frees up some space. */
+            __asm volatile ("wfi"); 
+        }
+    }
+
+    while(1) { 
+        __asm volatile ("wfi"); /* Idle forever once finished */
+    } 
+}
+\end{lstlisting}
+\textbf{What happens under the hood:} \texttt{uart\_write} will run 3 times, successfully copying 63, then 63, then 34 bytes. Meanwhile, the \texttt{UART0TX\_Handler} will automatically trigger exactly 160 times in the background, smoothly transferring the entire string byte-by-byte while the \texttt{main} program literally sleeps through most of the process.
+
+\subsection*{End of Unit 2}
+At this stage, \texttt{drivers/uart.c}, \texttt{drivers/systick.c}, \texttt{kernel/irq.s}, and \texttt{boot/startup.s} are functionally complete. 
+
+The \texttt{src/main.c} file currently initializes the UART, prints the kernel banner, starts the SysTick timer, sends the 160-byte test message through the interrupt-driven ring buffer, and then runs the temporary privileged loop that prints the uptime every second. 
+
+Currently, everything still runs privileged, directly inside \texttt{main}. The final architectural phase (Unit 3) will move this application workload to an unprivileged environment and establish a real, secure kernel boundary between the user application and the hardware.
+
+\section{Unit 3: System Calls and the Kernel Boundary}
+
+At the end of Unit~2 everything still ran privileged inside \texttt{main}. In this unit we build a real boundary: the application runs \textbf{unprivileged} and can reach the hardware only by \textit{asking} the kernel, through \textbf{system calls} built on top of the \texttt{svc} exception.
+
+\subsection{Recap: Privilege and \texttt{svc}}
+From Week 2, we established four architectural facts:
+\begin{enumerate}
+    \item \texttt{main} starts \textbf{privileged}. Setting \texttt{CONTROL.nPRIV = 1} drops the CPU into \textbf{unprivileged} Thread mode. The transition is one-way: changing \texttt{CONTROL} is itself a privileged operation, so unprivileged code can never clear the bit again.
+    \item Unprivileged code that touches the System Control Space (SysTick, NVIC, SCB) triggers a \textbf{BusFault}.
+    \item The \texttt{svc \#n} instruction is always permitted and raises the \textbf{SVCall} exception.
+    \item Every exception handler runs in Handler mode, which is \textbf{privileged}. When the handler returns, the CPU resumes right after the \texttt{svc} instruction and drops back to unprivileged mode.
+\end{enumerate}
+
+Put together, \texttt{svc} is the only controlled doorway from unprivileged to privileged code: the application can knock, but the kernel's handler decides what happens.
+
+In Week 2, \texttt{SVC\_Handler} performed one fixed job (printing a single message). In this unit it becomes a \textbf{system-call interface}: it multiplexes several services, receives arguments, and returns results to user space.
+
+\subsection{The Rule From Now On: The App Asks, The Kernel Does}
+In our architecture, the application never calls a device driver directly and never touches a hardware register. \textbf{Every I/O operation crosses the kernel boundary via a system call}, just as in Linux a user-space \texttt{printf} ultimately invokes the \texttt{write} system call.
+
+The diagram follows one request from top to bottom. Each layer talks only to the layer right below it, and the double line marks the kernel boundary: above it the code runs unprivileged in Thread mode, below it privileged in Handler mode.
+
+\begin{verbatim}
+ app_main()          printf("uptime: %u ms\n", now)        src/app.c          \
+     |                                                                         | unprivileged
+ user library        printf -> write_all -> sys_write()    lib/printf.c       | (Thread mode)
+     |                                                                         |
+ user stub           svc #1 ; bx lr                        lib/syscalls.s     /
+=====+============== SVCall exception: the kernel boundary =======================
+ entry               SVC_Handler: mrs r0, msp ; b ...      kernel/svc_entry.s  \
+     |                                                                          | privileged
+ dispatcher          svc_dispatch(frame): table[n](...)    kernel/syscall.c    | (Handler mode)
+     |                                                                          |
+ driver              uart_write() + UART0TX_Handler        drivers/uart.c      /
+     |
+ hardware            UART0 registers at 0x40004000
+\end{verbatim}
+
+\subsubsection{Logical vs. Physical Protection}
+Our Cortex-M3 setup does not yet use a Memory Protection Unit (MPU). The hardware therefore blocks unprivileged access only to the System Control Space (\textit{physical} protection); the UART registers at \texttt{0x40004000} remain reachable from unprivileged code, so keeping the app away from them is for now only a \textit{logical} rule of our design.
+
+Even so, the kernel boundary is a hard technical requirement, not a mere convention. The UART driver uses \texttt{irq\_save()} (which executes \texttt{cpsid i}) to protect its ring buffer. In unprivileged mode \texttt{cpsid} is silently ignored: the driver would believe it is protected while interrupts stay enabled. The driver is therefore unsafe unless it runs in privileged kernel mode.
+
+\subsection{The System-Call ABI and Services}
+While an API (Application Programming Interface) defines rules at the C source code level (like function names and types), an \textbf{ABI (Application Binary Interface)} is a strict low-level contract between the compiler and the hardware. When the C code is compiled into machine instructions, variable names disappear, leaving only memory addresses and CPU registers. 
+
+For our system calls, the ABI dictates exactly how the User Space and the Kernel must pass messages to each other:
+\begin{itemize}
+    \item \textbf{Service Number:} Embedded directly inside the \texttt{svc \#n} assembly instruction.
+    \item \textbf{Arguments:} The User Space must place them in registers \texttt{r0}, \texttt{r1}, and \texttt{r2} (following the AAPCS) before calling the kernel.
+    \item \textbf{Result:} The Kernel must leave the final answer in \texttt{r0}, exactly where the C caller expects to find it.
+\end{itemize}
+
+In practice, a system call looks exactly like an ordinary C function to the programmer, except under the hood it triggers an \texttt{svc} (Supervisor Call) instead of a standard branch (\texttt{bl}).
+
+To avoid using magic numbers in our C code, we define symbolic constants (e.g., \texttt{SYS\_WRITE}, \texttt{SYS\_READ}) in a shared header (\texttt{lib/syscalls.h}) included by both user space and the kernel. The available services are:
+
+\begin{table}[h!]
+    \centering
+    \small
+    \begin{tabular}{lllp{6.5cm}}
+        \toprule
+        \textbf{Number} & \textbf{Service} & \textbf{Arguments} & \textbf{Result} \\
+        \midrule
+        1 & \texttt{sys\_write} & \texttt{buf}, \texttt{len} & Bytes \textbf{accepted} (0 to \texttt{len}). Routes to \texttt{uart\_write}. \\
+        2 & \texttt{sys\_read} & None & One received byte, or \texttt{-1} if none. Routes to \texttt{uart\_getc\_polled}. \\
+        3 & \texttt{sys\_uptime} & None & Milliseconds since boot. Routes to \texttt{systick\_uptime\_ms}. \\
+        0, $\ge 4$ & Invalid & None & Unknown service (e.g., 0 or 99): returns \texttt{-1}. \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\textbf{No service waits:} \texttt{sys\_write} takes only what currently fits in the TX ring buffer and returns the count immediately. The unprivileged caller is responsible for waiting (the reason is explained in ``Why the Kernel Never Waits'' below).
+
+\subsection{The Exception Frame and the Journey of a Syscall}
+In software engineering, a \textbf{stub} is a small "dummy" function. From the perspective of the user application, asking to print a string is as simple as calling \texttt{sys\_write(buf, len)}. However, this C function is actually an assembly stub that does not perform any real work. Its only job is to pause the application and securely request the kernel's attention.
+
+To understand how data safely crosses the boundary between User Space and the Kernel, we must track the exact sequence of events:
+
+\begin{enumerate}
+    \item \textbf{C prepares the data (User Space):} Following the ABI, the C compiler places the arguments \texttt{buf} and \texttt{len} into physical registers \texttt{r0} and \texttt{r1}.
+    \item \textbf{The Stub traps the CPU (Assembly):} The stub executes \texttt{svc \#1}. The Cortex-M hardware instantly takes over, suspends the application, and automatically saves 8 core registers (including \texttt{r0} and \texttt{r1}) into the stack memory. This memory block is called the \textbf{Exception Frame}.
+    \item \textbf{The Kernel executes (C):} The kernel views this saved memory block as a standard C array (\texttt{uint32\_t *frame}). The magic of this array is its layout: \texttt{frame[0]} is exactly where the hardware saved the old \texttt{r0}, and \texttt{frame[1]} is \texttt{r1}. The kernel simply reads \texttt{frame[0]} and \texttt{frame[1]} to retrieve the user's arguments, performs the UART write, and writes its final result back into \texttt{frame[0]}, overwriting the old data.
+    \item \textbf{The Hardware Restores the Context:} The kernel finishes its job. The hardware retrieves the Exception Frame from memory and shoots the values back into the physical CPU registers. Because the kernel wrote the result into \texttt{frame[0]}, the physical register \texttt{r0} is now populated with the kernel's answer.
+    \item \textbf{The Stub returns (User Space):} The C program wakes up. It checks \texttt{r0} (as standard C functions do) and seamlessly finds the return value, completely unaware that a complex kernel transition just occurred.
+\end{enumerate}
+
+\subsubsection*{Hardcoded Syscall IDs (The Assembly Stubs)}
+Because this pure assembly file (\texttt{lib/syscalls.s}) cannot easily read the C macros defined in \texttt{lib/syscalls.h}, the service numbers following the \texttt{svc} instruction are encoded as hardcoded literals. 
+
+\begin{lstlisting}
+    .syntax unified
+    .cpu cortex-m3
+    .thumb
+    .section .text,"ax",%progbits
+
+/* int sys_write(const char *buf, unsigned len) 
+   C places 'buf' in r0, 'len' in r1 */
+    .global sys_write
+    .type sys_write, %function
+    .thumb_func
+sys_write:
+    svc #1                      /* Trap into kernel requesting service #1 */
+    bx lr                       /* Return to C (kernel placed result in r0) */
+    .size sys_write, . - sys_write
+
+/* int sys_read(void) */
+    .global sys_read
+    .type sys_read, %function
+    .thumb_func
+sys_read:
+    svc #2                      /* Trap into kernel requesting service #2 */
+    bx lr                       /* Return to C */
+    .size sys_read, . - sys_read
+
+/* uint32_t sys_uptime(void) */
+    .global sys_uptime
+    .type sys_uptime, %function
+    .thumb_func
+sys_uptime:
+    svc #3                      /* Trap into kernel requesting service #3 */
+    bx lr                       /* Return to C */
+    .size sys_uptime, . - sys_uptime
+\end{lstlisting}
+
+\subsection{The Kernel Entry Point: Why It Must Be Assembly}
+When the \texttt{svc} instruction fires, the CPU jumps to the \texttt{SVC\_Handler}. Its only responsibility is to find the exact memory address of the Exception Frame and pass it to the C kernel dispatcher (\texttt{svc\_dispatch}). That address is simply the current Stack Pointer.
+
+This is exactly why \texttt{SVC\_Handler} \textbf{must} be written in raw assembly (\texttt{kernel/svc\_entry.s}). C compilers are highly intrusive: when you write a C function, the compiler automatically inserts hidden "prologue" code (such as \texttt{push \{r7, lr\}}) to allocate local variables. This prologue shifts the Stack Pointer downward without our knowledge. If \texttt{SVC\_Handler} were written in C, we would instantly lose track of where the hardware actually saved the Exception Frame.
+
+By writing it in assembly, we achieve millimeter-level precision. The very first instruction executes exactly as written:
+
+\begin{lstlisting}
+    .global SVC_Handler
+    .type SVC_Handler, %function
+    .thumb_func
+SVC_Handler:
+    mrs r0, msp                 /* r0 = MSP: save the exact address of the Exception Frame */
+    b svc_dispatch              /* Jump to C code, passing the frame address in r0 */
+\end{lstlisting}
+
+The \texttt{mrs r0, msp} instruction securely captures the uncorrupted Stack Pointer and passes it as the first argument (\texttt{r0}) to \texttt{svc\_dispatch}. 
+
+Notice we use a plain branch (\texttt{b}) rather than a branch-with-link (\texttt{bl}). A \texttt{bl} instruction would overwrite the Link Register (\texttt{lr}), destroying the vital \texttt{EXC\_RETURN} value (\texttt{0xFFFFFFF9}) needed to return to User Space. With a tail branch, \texttt{lr} is preserved, allowing the hardware to perform the exception return seamlessly when the C kernel completes its task.
+
+\subsection{Extracting the Service Number and Arguments}
+The service number travels inside the \texttt{svc} instruction itself, so the kernel has to read it back from the code. In Thumb mode, \texttt{svc \#n} is a \textbf{16-bit} instruction: the high byte is the opcode \texttt{0xDF} and the low byte is the immediate \texttt{n} (so \texttt{svc \#1} is \texttt{0xDF01}). Because the Cortex-M3 is \textbf{little-endian}, the low byte \texttt{n} is stored at the lower address, followed by \texttt{0xDF}:
+
+\begin{verbatim}
+ address:   0x8e0   0x8e1   0x8e2   0x8e3
+ byte:      0x01    0xdf    0x70    0x47
+            +- svc #1 --+   +- bx lr ---+
+\end{verbatim}
+
+On exception entry, the hardware pushes the 8-word frame: \texttt{frame[0..7]} = \texttt{r0--r3}, \texttt{r12}, \texttt{lr}, \texttt{pc}, \texttt{xPSR}. The stacked \texttt{PC} (\texttt{frame[6]}) points to the instruction immediately \textit{after} \texttt{svc} (here \texttt{bx lr}). Working backwards from it, the opcode \texttt{0xDF} sits at \texttt{PC - 1} and the service number \texttt{n} sits at \texttt{PC - 2}. The user arguments (\texttt{r0--r2}) are read from \texttt{frame[0]}, \texttt{frame[1]}, and \texttt{frame[2]}.
+
+\subsection{The Dispatcher and Validating the Result Return}
+To route calls without a large \texttt{switch}, \texttt{kernel/syscall.c} uses a function pointer table:
+
+\begin{lstlisting}
+typedef uint32_t ( *syscall_fn )( uint32_t a0, uint32_t a1, uint32_t a2 );
+
+static const syscall_fn table[] = {
+    [SYS_WRITE]  = sys_write_impl,
+    [SYS_READ]   = sys_read_impl,
+    [SYS_UPTIME] = sys_uptime_impl,
+};
+#define TABLE_SIZE ( sizeof( table ) / sizeof( table[0] ) )
+
+void svc_dispatch( uint32_t *frame )
+{
+    uint8_t n = ( ( uint8_t * ) frame[6] )[-2];
+
+    if ( n >= TABLE_SIZE || table[n] == 0 ) {
+        frame[0] = ( uint32_t ) -1;             /* unknown service */
+        return;
+    }
+    /* run it; the result goes into the stacked r0 = the caller's r0 */
+    frame[0] = table[n]( frame[0], frame[1], frame[2] );
+}
+\end{lstlisting}
+
+How it works:
+\begin{itemize}
+    \item The table uses designated initializers: each service number is the \textit{index} of its implementation. Index 0 is never filled, so it stays empty (\texttt{NULL}).
+    \item \texttt{n} is read from the byte at stacked \texttt{PC - 2}, as seen above.
+    \item The check \texttt{n >= TABLE\_SIZE || table[n] == 0} rejects out-of-range numbers (e.g., 99) and the empty slot 0: the caller receives \texttt{-1}.
+    \item Otherwise the implementation is called with the three stacked arguments, and its return value is stored in \texttt{frame[0]}.
+\end{itemize}
+
+\paragraph{Why Write to \texttt{frame[0]}?}
+The kernel cannot return the result simply by leaving it in the physical register \texttt{r0}. On exception return, the hardware pops the 8-word frame from the stack back into the CPU registers, overwriting physical \texttt{r0} with \texttt{frame[0]}. Writing the return value into \texttt{frame[0]} ensures the hardware restores it into the caller's \texttt{r0}.
+
+\subsubsection{Try It: Your First System Call}
+In \texttt{src/main.c}, include \texttt{"lib/syscalls.h"} and replace \texttt{systick\_uptime\_ms()} with \texttt{sys\_uptime()}. The output is unchanged, but it now follows the new path:
+
+\texttt{sys\_uptime} $\rightarrow$ \texttt{svc \#3} $\rightarrow$ \texttt{SVC\_Handler} $\rightarrow$ \texttt{svc\_dispatch} $\rightarrow$ \texttt{sys\_uptime\_impl} $\rightarrow$ \texttt{systick\_uptime\_ms}.
+
+(Although \texttt{main} is still privileged here, \texttt{svc} works from privileged mode too.)
+
+\subsubsection{Finding the Service Number in GDB}
+You can inspect the hardware frame and decode $n$ in GDB:
+\begin{lstlisting}
+(gdb) break *SVC_Handler                # very first instruction of the entry
+(gdb) continue
+(gdb) x/8wx $sp                         # the frame: r0 r1 r2 r3 / r12 lr pc xPSR
+(gdb) p/x $lr
+(gdb) x/2bx ((unsigned *)$sp)[6] - 2    # the 2 bytes before the stacked pc
+\end{lstlisting}
+Here \texttt{frame[6]} points right after \texttt{svc} (e.g., \texttt{0x7e6}), and the two preceding bytes are \texttt{0x03} and \texttt{0xDF} (\texttt{svc \#3} in little-endian, so $n = 3$, \texttt{SYS\_UPTIME}). Moreover, \texttt{lr} holds \texttt{0xFFFFFFF9} (\texttt{EXC\_RETURN}), preserved by \texttt{b svc\_dispatch}. Running \texttt{stepi} twice enters \texttt{svc\_dispatch}, and \texttt{finish} returns directly to \texttt{bx lr} in \texttt{sys\_uptime}.
+
+\subsection{The Kernel Rules: Where SVC Works}
+The \texttt{svc} instruction raises \texttt{SVCall} synchronously, but like any exception it can only preempt code that is \textit{less} urgent than itself (remember: a lower priority value means higher urgency). SVCall has priority \texttt{0x80}:
+
+\begin{table}[h!]
+    \centering
+    \small
+    \begin{tabular}{p{5.2cm} p{2.8cm} p{4.5cm}}
+        \toprule
+        \textbf{Where \texttt{svc} runs} & \textbf{Current priority} & \textbf{Result} \\
+        \midrule
+        \texttt{app\_main}, \texttt{main} (Thread mode) & none (lowest) & taken \\
+        \texttt{SysTick\_Handler} / \texttt{UART0TX\_Handler} & \texttt{0xE0} / \texttt{0xC0} &
+        taken: SVCall is more urgent, so it nests \\
+        \texttt{SVC\_Handler} and anything it calls & \texttt{0x80} & \textbf{HardFault} \\
+        a fault handler & \texttt{0x00} or more urgent & \textbf{HardFault} \\
+        between \texttt{irq\_save} and \texttt{irq\_restore} (\texttt{PRIMASK} = 1) &
+        masked & \textbf{HardFault} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Executing \texttt{svc} from a handler of equal or higher urgency (or while \texttt{PRIMASK = 1}) cannot be serviced, and it escalates to a \textbf{HardFault}. This is why the kernel retains its own polled \texttt{kprintf}, independent of system calls.
+
+\subsection{Why the Kernel Never Waits}
+The kernel must never wait inside an exception handler. Suppose \texttt{sys\_write\_impl} looped inside \texttt{SVCall} (priority \texttt{0x80}) waiting for the UART TX buffer to empty: the UART TX interrupt (priority \texttt{0xC0}) is less urgent, so it could never preempt the loop, and the buffer would never empty. The system would deadlock. SysTick (\texttt{0xE0}) would be blocked as well, stopping the system clock.
+
+Instead, the kernel accepts only what fits in the buffer and returns immediately, leaving the waiting (\texttt{wfi}) to unprivileged Thread mode, where every interrupt can run. Two experiments at the end of this unit show both problems live.
+
+\subsection{User Space Library: Implementing \texttt{printf}}
+With the system calls operational, we move to user space and implement \texttt{printf} as a user-level library in \texttt{lib/printf.c}. The kernel keeps its own polled \texttt{kprintf}; user applications use this \texttt{printf}, built on system calls.
+
+Unlike \texttt{kprintf} (which calls the polled hardware driver directly), the user-level \texttt{printf} works under unprivileged constraints, in two steps:
+\begin{enumerate}
+    \item It uses the shared \texttt{vformat} engine to format the string into a local 64-byte buffer allocated on the unprivileged task's stack.
+    \item It flushes this buffer to the hardware by invoking the \texttt{sys\_write} system call.
+\end{enumerate}
+
+\begin{table}[h!]
+    \centering
+    \small
+    \begin{tabular}{p{3.4cm} p{4.6cm} p{4.6cm}}
+        \toprule
+        & \textbf{\texttt{kprintf}} & \textbf{\texttt{printf}} \\
+        \midrule
+        \textbf{Runs in} & Kernel (privileged) & User code (unprivileged) \\
+        \textbf{Output path} & Polled UART driver, directly & \texttt{vformat} $\rightarrow$ \texttt{sys\_write} $\rightarrow$ \texttt{svc} $\rightarrow$ ring buffer \\
+        \textbf{When output is blocked} & Busy-waits (polling) & Sleeps with \texttt{wfi} \\
+        \textbf{Inside handlers / HardFault} & Works: needs no \texttt{svc} & \textbf{HardFault}: the \texttt{svc} cannot be taken \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsubsection{Handling Partial Writes and Waiting (\texttt{write\_all})}
+Because \texttt{sys\_write} pushes data into the kernel's 64-byte interrupt-driven ring buffer, it only accepts what currently fits and returns the accepted count immediately, without waiting.
+
+The user library handles partial writes with \texttt{write\_all}, which loops until all bytes are sent. If \texttt{sys\_write} returns 0, the ring buffer is full: instead of busy-waiting, the application executes \texttt{wfi} (Unit~2). The CPU sleeps until an interrupt fires (such as UART TX freeing a buffer slot), then resumes the loop:
+
+\begin{lstlisting}
+void write_all(const char *buf, unsigned len) {
+    while ( len > 0 ) {
+        int n = sys_write(buf, len); /* The kernel takes what fits */
+        buf += n;                    /* Skip the accepted bytes */
+        len -= n;
+        
+        if (n == 0) {
+            __asm volatile ("wfi");  /* Buffer full: sleep until an interrupt */
+        }
+    }
+}
+\end{lstlisting}
+
+\subsection{Implementing \texttt{sleep\_ms} in User Space}
+Using \texttt{wfi} and unsigned subtraction (Unit~2), we can implement \texttt{sleep\_ms} without imprecise delay loops, by checking \texttt{sys\_uptime()} (\texttt{SYS\_UPTIME}) between sleep states:
+
+\begin{lstlisting}
+void sleep_ms(uint32_t ms) {
+    uint32_t start = sys_uptime();
+    while (sys_uptime() - start < ms) {
+        __asm volatile ("wfi"); /* Sleep until the next interrupt */
+    }
+}
+\end{lstlisting}
+
+The condition \texttt{sys\_uptime() - start < ms} uses unsigned 32-bit arithmetic, which handles the 32-bit wraparound (after $\approx 49.7$ days) without error. Since SysTick fires every 10~ms, each \texttt{wfi} wakes the task at least that often to re-check the clock. Because the waiting occurs in unprivileged Thread mode, the kernel is never blocked: every interrupt can preempt the sleeping task, allowing the OS to handle background UART transmission and timekeeping.
+
+\subsection{The Final System Boot Flow}
+\texttt{src/main.c} acts as the \textbf{kernel} initializer. It runs privileged once at boot and performs five steps:
+\begin{enumerate}
+    \item \texttt{uart\_init()}: Initializes the console first so subsequent code can print.
+    \item \texttt{kprintf}: Prints the boot banner via polling.
+    \item \texttt{systick\_init()}: Starts the 10~ms tick used by \texttt{sys\_uptime} and \texttt{sleep\_ms}.
+    \item \textbf{Privilege Drop}: Sets \texttt{CONTROL.nPRIV = 1} followed by an \texttt{isb} (Instruction Synchronization Barrier). The \texttt{isb} flushes any instructions already prefetched under the old privileged state, ensuring all subsequent instructions run unprivileged.
+    \item \texttt{app\_main()}: Calls the user application, which never returns.
+\end{enumerate}
+
+\begin{lstlisting}
+#include "drivers/uart.h"
+#include "drivers/systick.h"
+#include "kernel/kprintf.h"
+#include "src/app.h"
+
+int main( void )
+{
+    uart_init();                                /* 1. console first */
+    kprintf( "scratch-os: kernel started\n" );  /* 2. polled print */
+    systick_init();                             /* 3. 10 ms tick */
+    kprintf( "dropping to unprivileged mode\n" );
+    
+    __asm volatile (            /* 4. CONTROL = CONTROL | 1; (nPRIV = 1) */
+        "mrs r0, control    \n" /* r0 = CONTROL */
+        "orr r0, r0, #1     \n" /* r0 |= 1: set nPRIV */
+        "msr control, r0    \n" /* CONTROL = r0: now unprivileged */
+        "isb                \n" /* refetch under the new rules */
+        : : : "r0", "memory" );
+        
+    app_main();                                 /* 5. never returns */
+    for ( ;; ) { }                              /* not reached */
+}
+\end{lstlisting}
+
+\subsection{The User Application: \texttt{app\_main}}
+\texttt{src/app.c} contains the unprivileged application, which includes only \texttt{lib/syscalls.h} and \texttt{lib/printf.h}.
+
+Every 1000~ms, it prints the uptime. It compares against the system clock (\texttt{now - last >= 1000}) rather than counting loop iterations, which would drift because of the time spent inside \texttt{printf}. On each iteration, it also checks \texttt{sys\_read()} for incoming keys, echoes them if present, and sleeps via \texttt{sleep\_ms(10)}:
+
+\begin{lstlisting}
+#include <stdint.h>
+#include "src/app.h"
+#include "lib/syscalls.h"
+#include "lib/printf.h"
+
+void app_main( void )
+{
+    printf( "app: hello from unprivileged code\n" );
+    uint32_t last = 0;          /* when the uptime was last printed */
+
+    for ( ;; )
+    {
+        uint32_t now = sys_uptime();
+        if ( now - last >= 1000 )           /* one second passed? */
+        {
+            printf( "uptime: %u ms\n", now );
+            last += 1000;
+        }
+
+        int c = sys_read();                 /* never waits: -1 = no key */
+        if ( c != -1 )
+        {
+            printf( "key: %c\n", c );
+        }
+
+        sleep_ms( 10 );
+    }
+}
+\end{lstlisting}
+
+While \texttt{app\_main} runs unprivileged, hardware interrupts (SysTick, UART TX) and system calls (SVCall) still execute privileged: the Cortex-M hardware raises privilege on exception entry and restores unprivileged mode on return.
+
+\subsection{A Debug Print Inside the Kernel}
+This experiment answers a question: why does the kernel keep its own \texttt{kprintf}, now that there is a \texttt{printf}? Suppose you want to trace every uptime request. In \texttt{kernel/syscall.c}, add \texttt{\#include "lib/printf.h"} below the other includes, and in \texttt{sys\_uptime\_impl} add one line before the \texttt{return}:
+
+\begin{lstlisting}
+    printf("uptime called\n");        /* NEW: debug print */
+\end{lstlisting}
+
+You might expect \texttt{uptime called} about a hundred times per second. \texttt{make run} prints instead:
+
+\begin{lstlisting}[language=bash]
+scratch-os: kernel started
+dropping to unprivileged mode
+app: hello from unprivileged code
+HardFault: HFSR=0x40000000
+\end{lstlisting}
+
+Follow the call: \texttt{printf} $\rightarrow$ \texttt{write\_all} $\rightarrow$ \texttt{sys\_write} $\rightarrow$ \textbf{\texttt{svc \#1}}, executed \textbf{inside} the SVCall handler, whose priority is \texttt{0x80}. An exception can only interrupt code that is \textbf{less urgent} than itself, and SVCall is not more urgent than SVCall. Unlike an interrupt, which can simply stay pending, an \texttt{svc} cannot be postponed: it must be taken now or never. So the CPU \textbf{escalates} it to a HardFault.
+
+\texttt{HFSR} bit~30, \textbf{FORCED} (\texttt{0x40000000}, \texttt{SCB\_HFSR\_FORCED} in \texttt{include/cmsdk.h}), means ``a fault was escalated to HardFault''. Notice that the report itself prints fine: \texttt{HardFault\_Handler} uses \texttt{kprintf}, which needs no \texttt{svc}. Undo both edits (the \texttt{\#include} and the \texttt{printf} line).
+
+\subsection{Making the Kernel Wait}
+The second experiment answers another question: why does \texttt{sys\_write} return a count instead of simply waiting until everything is sent? Make two temporary edits. In \texttt{kernel/syscall.c}, in \texttt{sys\_write\_impl}, replace \texttt{return uart\_write(buf, len);} with a loop that waits until \textbf{everything} is accepted:
+
+\begin{lstlisting}
+    unsigned done = 0;
+    while (done < len)
+        done += uart_write(buf + done, len - done);
+    return done;
+\end{lstlisting}
+
+And in \texttt{src/app.c}, in \texttt{app\_main}, right after the hello \texttt{printf}, add a direct write of 130 bytes, more than the 64-byte ring buffer (the compiler joins the four adjacent strings into one):
+
+\begin{lstlisting}
+    sys_write("0123456789012345678901234567890123456789"
+              "0123456789012345678901234567890123456789"
+              "0123456789012345678901234567890123456789"
+              "012345678\n", 130);
+\end{lstlisting}
+
+Do the 130 characters appear? Do the \texttt{uptime:} lines? \texttt{make run} prints:
+
+\begin{lstlisting}[language=bash]
+scratch-os: kernel started
+dropping to unprivileged mode
+app: hello from unprivileged code
+0
+\end{lstlisting}
+
+One \texttt{0}, then nothing, forever. In GDB (\texttt{make debug}, \texttt{continue}, then \texttt{Ctrl-C} to interrupt), \texttt{p \$xpsr \& 0x1ff} gives \texttt{11}: the CPU is inside the SVCall handler. \texttt{bt} shows \texttt{uart\_write} $\leftarrow$ \texttt{sys\_write\_impl} $\leftarrow$ \texttt{svc\_dispatch} $\leftarrow$ \texttt{<signal handler called>} $\leftarrow$ \texttt{sys\_write} $\leftarrow$ \texttt{app\_main} (the innermost frame may be \texttt{irq\_save} or \texttt{irq\_restore} instead, depending on where you interrupt it).
+
+Here is what happened:
+\begin{enumerate}
+    \item The first \texttt{uart\_write} filled the ring buffer and \textbf{primed} the UART with the first byte: that is the \texttt{0} you see.
+    \item From then on the buffer stays full. Only \texttt{UART0TX\_Handler}, at priority \textbf{\texttt{0xC0}}, can empty it, but the CPU is inside the SVCall handler, at \textbf{\texttt{0x80}}, which is more urgent.
+    \item The TX interrupt stays \textbf{pending} forever, and the loop waits forever for room that never comes.
+    \item SysTick, at \texttt{0xE0}, is blocked too: the clock stops.
+\end{enumerate}
+
+The fix is the design you already have. The kernel \textbf{never waits}: \texttt{sys\_write} returns the accepted count, and \texttt{write\_all} does the waiting with \texttt{wfi} in \textbf{Thread mode}, where the TX interrupt can run. Undo both edits.
+
+\subsection{Privilege and Layers in GDB}
+We can verify the privilege separation in GDB by setting breakpoints in \texttt{main} and \texttt{app\_main} and inspecting \texttt{\$control}:
+\begin{lstlisting}[language=bash]
+(gdb) break main
+(gdb) break app_main
+(gdb) continue          -> Breakpoint 1, main ()
+(gdb) p/x $control      -> 0x0          (privileged)
+(gdb) continue          -> Breakpoint 2, app_main ()
+(gdb) p/x $control      -> 0x1          (nPRIV set: unprivileged)
+\end{lstlisting}
+
+Next, place a breakpoint inside \texttt{sys\_write\_impl}:
+\begin{lstlisting}[language=bash]
+(gdb) break sys_write_impl
+(gdb) continue
+(gdb) p/x $control             # CONTROL: is nPRIV still set?
+(gdb) p/x $xpsr & 0x1ff        # low 9 bits of xPSR = exception number
+(gdb) bt                       # backtrace: every layer of the call path
+\end{lstlisting}
+Inside \texttt{sys\_write\_impl}, \texttt{\$control} is still \texttt{0x1} (\texttt{nPRIV} remains set); the CPU has privileged access because it is running in Handler mode, not because \texttt{CONTROL} changed. The low 9 bits of \texttt{xPSR} hold the exception number, where \texttt{0xb} (11) identifies SVCall.
+
+The backtrace (\texttt{bt}) shows every layer of the call path:
+\begin{lstlisting}[language=bash]
+#0  sys_write_impl (a0=..., a1=34, a2=...)
+#1  svc_dispatch (frame=...)
+#2  <signal handler called>
+#3  sys_write ()
+#4  write_all (buf=... "app: hello from unprivileged code\n", len=34)
+#5  printf (fmt=...)
+#6  app_main ()
+#7  main ()
+\end{lstlisting}
+The \texttt{<signal handler called>} frame is GDB's marker for an \textbf{exception entry}: frames above it run in privileged Handler mode, while frames below it belong to the unprivileged user application.
+
+\section{Where to Find the Code}
+\texttt{week-03/} holds two sibling folders, \texttt{base/} and \texttt{solution/}, each with its own \texttt{Makefile} and building independently. All paths in these notes are relative to \texttt{week-03/solution/}. The base's \texttt{README.md} lists, folder by folder, what is given and what you write across the three units.
+
+The starting point is \texttt{week-03/base/}: the full \texttt{Makefile} (\texttt{run}, \texttt{debug}, \texttt{run-trace}), the linker script, the complete \texttt{include/cmsdk.h}, \texttt{boot/startup.s} with CPU setup and the 16 core slots, silent fault handlers in \texttt{kernel/faults.c}, every API header, the number helpers in \texttt{lib/format.c}, a \texttt{src/main.c} that prints nothing, and marker files for everything else.
+
+The finished result is in \texttt{week-03/solution/}, organized by OS layer:
+\begin{itemize}
+  \item \texttt{boot/startup.s}: the 48-entry vector table \texttt{isr\_vector}, the weak defaults, and \texttt{Reset\_Handler};
+  \item \texttt{include/cmsdk.h}: the hardware register map (Unit~1);
+  \item \texttt{drivers/uart.c} (\textbf{driver}): \texttt{uart\_init}, \texttt{uart\_putc\_polled}, \texttt{uart\_getc\_polled}, the TX ring buffer, \texttt{uart\_write}, and \texttt{UART0TX\_Handler};
+  \item \texttt{drivers/systick.c} (\textbf{driver}): \texttt{systick\_init}, \texttt{SysTick\_Handler}, and \texttt{systick\_uptime\_ms};
+  \item \texttt{lib/format.c}: \texttt{vformat}, shared by both print functions;
+  \item \texttt{kernel/kprintf.c}: \texttt{kprintf}, the kernel's polled print;
+  \item \texttt{kernel/faults.c}: the four fault handlers that print \texttt{HFSR} or \texttt{CFSR};
+  \item \texttt{kernel/irq.s}: \texttt{irq\_save} and \texttt{irq\_restore};
+  \item \texttt{kernel/svc\_entry.s} (\textbf{kernel entry}): the two-instruction \texttt{SVC\_Handler};
+  \item \texttt{kernel/syscall.c} (\textbf{dispatcher and services}): the syscall implementations, \texttt{table}, and \texttt{svc\_dispatch};
+  \item \texttt{lib/syscalls.s} and \texttt{lib/syscalls.h} (\textbf{user stubs}): \texttt{sys\_write}, \texttt{sys\_read}, and \texttt{sys\_uptime} (\texttt{svc \#n ; bx lr}) plus service numbers;
+  \item \texttt{lib/printf.c} (\textbf{user library}): \texttt{write\_all}, \texttt{printf}, and \texttt{sleep\_ms};
+  \item \texttt{src/main.c} (\textbf{kernel boot}): initializes hardware, drops privilege, and calls \texttt{app\_main};
+  \item \texttt{src/app.c} (\textbf{application}): \texttt{app\_main}, the unprivileged user task.
+\end{itemize}
+
+Every file in \texttt{solution/} is commented line by line. If these notes and the code ever disagree, the code is the reference.
+
+
 \section{A prova di coglione}
+\subsection{Unità 1}
 L'Unità 1 descrive la transizione da un programma dipendente dall'emulatore a un sistema operativo bare-metal capace di gestire autonomamente l'hardware. Il focus principale è la creazione di un driver per la porta seriale (UART) comunicando direttamente con i registri fisici.   Architettura e Memory-Mapped I/O
 
 Il sistema utilizza una CPU Cortex-M3 collegata a un bus veloce AHB per la memoria e a un bus secondario APB per le periferiche (come l'UART e i timer). Attraverso il paradigma Memory-Mapped I/O (MMIO), i dispositivi hardware vengono controllati leggendo e scrivendo su specifici indirizzi di memoria (ad esempio 0x40004000 per l'UART0). L'accesso a questi registri in C richiede rigorosamente la parola chiave volatile per forzare il compilatore a eseguire ogni singola operazione di I/O, evitando che vengano rimosse durante la fase di ottimizzazione.   Sviluppo del Device Driver in Polling
@@ -958,945 +1979,389 @@ Il driver viene infine separato dalla logica di formattazione delle stringhe tra
 }
 % ======================== FINE TABELLA ========================
 
+\subsection{Unità 2}
+Questa unità segna il passaggio fondamentale dal \textbf{polling} (in cui la CPU spreca tempo aspettando in un ciclo infinito) agli \textbf{interrupt}, meccanismi che permettono alla CPU di lavorare o riposare finché l'hardware non richiede attenzione.
 
-
-\section{Unit 2: Calling Convention and Interrupts}
-
-Up to this point, our entire OS relies on polling. The \texttt{uart\_putc\_polled} driver explicitly reads the hardware \texttt{STATE} register in an infinite loop until the transmitter has room.
-
-\subsection{Polling versus Interrupts}
-While polling is simple, it is highly inefficient for a general-purpose operating system. The alternative is an \textbf{interrupt}: the device actively raises a physical signal when it requires attention, the CPU instantly pauses its current task, runs a handler (an exception), and then resumes its previous work.
-
-\begin{table}[h!]
-    \centering
-    \begin{tabular}{p{2.5cm}p{5.5cm}p{6cm}}
-        \toprule
-        & \textbf{Polling} & \textbf{Interrupts} \\
-        \midrule
-        \textbf{CPU time} & Wasted in a waiting loop, even when nothing is happening. & Spent only when an event actually happens (entry, handler execution, exit). \\
-        \textbf{Latency} & Up to one full trip around the while loop. & The exception entry time ($\sim$12 cycles on Cortex-M3), assuming nothing more urgent is running. \\
-        \textbf{Complexity} & Extremely simple; one loop. & Complex: requires handlers, shared data protection, and priority management. \\
-        \textbf{CPU state} & Constantly busy spinning. & Free to run other application work, or safely asleep. \\
-        \bottomrule
-    \end{tabular}
-\end{table}
-
-To contextualize the performance penalty: a UART transmitting 10 bits at 115,200 baud requires $\sim$87~$\mu$s per byte. At our board's 25~MHz clock, that equates to \textbf{2,170 cycles}. With polling, all 2,170 cycles are wasted waiting. 
-
-However, polling is necessary for events that are certain and very close in time, or when interrupts cannot fire. This is why \texttt{kprintf} remains polled: it must guarantee output even when the system crashes inside a fault handler. Interrupts are suited for rare events (a key press) or lengthy data transfers.
-
-\subsection{The AAPCS: How C Calls a Function}
-To write assembly code that C can call, both must adhere to the same rules for passing arguments and results. For ARM, these are defined in the \textbf{AAPCS} (Procedure Call Standard for the Arm Architecture).
-
-The standard defines strict roles for the core registers:
 \begin{itemize}
-    \item \textbf{\texttt{r0--r3}:} Pass the first four arguments. \texttt{r0} also carries the function's return value. These are \textbf{Caller-Saved} (scratch) registers: a function can overwrite them freely.
-    \item \textbf{\texttt{r4--r11}:} Used for the function's own long-lived local variables. These are \textbf{Callee-Saved} registers: if a function uses them, it must restore their original values before returning (e.g., \texttt{push \{r4, lr\}} and \texttt{pop \{r4, pc\}}).
-    \item \textbf{\texttt{r12}:} A scratch register, strictly \textbf{Caller-Saved}.
-    \item \textbf{\texttt{lr} (Link Register):} Holds the return address written by the \texttt{bl} instruction. It is \textbf{Caller-Saved}, so a function that calls another must save it first.
-    \item \textbf{\texttt{sp} (Stack Pointer):} Must remain a multiple of 8 at every function boundary.
+    \item \textbf{Regole di convivenza (AAPCS):} Per far comunicare il C e l'Assembly, si usa lo standard AAPCS. Definisce quali registri possono essere sovrascritti liberamente da una funzione (\textit{caller-saved}) e quali devono essere rigorosamente salvati e ripristinati (\textit{callee-saved}).
+    \item \textbf{Gestione hardware delle eccezioni:} Quando scatta un interrupt, l'hardware Cortex-M salva in automatico 8 registri (che corrispondono esattamente ai \textit{caller-saved}) nello stack. Nel Link Register viene inserito un codice magico (\texttt{EXC\_RETURN}) che dice alla CPU come ripristinare il contesto a fine funzione. Questo design geniale permette di scrivere gli handler degli interrupt come normalissime funzioni C.
+    \item \textbf{Controllo Globale e SysTick:} Il registro \textbf{PRIMASK} funge da interruttore generale degli interrupt. Il \textbf{SysTick Timer} è invece il cuore del sistema operativo: scatta a intervalli regolari (es. ogni 10~ms) garantendo la \textit{prelazione hardware} (ferma i programmi bloccati in loop), aggiorna il tempo di attività del sistema (gestendo i rischi di overflow) e permette alla CPU di risparmiare energia mettendosi in pausa con l'istruzione \texttt{wfi} (Wait For Interrupt).
+    \item \textbf{Gestione delle Periferiche (NVIC):} Gli interrupt esterni sono gestiti dal controller NVIC. Affinché un interrupt arrivi alla CPU deve superare i ``3 cancelli'' (abilitazione sul dispositivo, sul NVIC e globalmente). Vige una \textbf{Regola d'Oro}: l'handler deve sempre confermare l'interrupt pulendo il flag hardware, altrimenti l'eccezione scatterà all'infinito bloccando il sistema. 
+    \item \textbf{Concorrenza e Sezioni Critiche:} Gli interrupt causano problemi di concorrenza (le \textit{Race Condition}): un interrupt può interrompere il \texttt{main} a metà di un calcolo, corrompendo i dati condivisi (\textit{lost update}). Si risolve creando \textbf{Sezioni Critiche} tramite le funzioni \texttt{irq\_save} e \texttt{irq\_restore}, che disabilitano brevissimamente gli interrupt garantendo l'esecuzione atomica. L'uso del ripristino (\textit{restore}) garantisce che gli interrupt non vengano riabilitati per sbaglio se le funzioni protette sono annidate.
+    \item \textbf{Il Ring Buffer e l'UART:} Per inviare lunghi testi senza bloccare il sistema, si introduce un modello Produttore/Consumatore usando un \textbf{Ring Buffer} (una coda circolare di 64 byte). Il \texttt{main} (Produttore) salva i dati nel buffer e, grazie alla \textit{Priming Rule}, innesca l'hardware inviando manualmente il primo byte. Da quel momento, l'handler hardware (Consumatore) si sveglia in automatico a ogni byte inviato e svuota il buffer in background, mentre il programma principale può letteralmente ``dormire''.
 \end{itemize}
 
-\subsection{Writing Assembly Callable from C: The CPU's Interrupt State}
-Before handling hardware interrupts, we must manage the CPU's global ability to listen to them. The Cortex-M CPU has a 1-bit hardware register called \textbf{PRIMASK}. When \texttt{PRIMASK} is 1, all configurable interrupts are masked (disabled); when 0, they are allowed. 
+% ======================= INIZIO TABELLA =======================
+{\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.2}
+\noindent\textbf{Come leggere la tabella.} Seconda colonna: l'idea in parole semplici. Terza colonna: \esem un caso concreto, \attn l'errore tipico, \regl la regola da ricordare.\par\medskip
+\begin{longtable}{P{0.15}P{0.36}P{0.40}}
+    \caption{Riepilogo dei concetti dell'Unità 2}\\
+    \toprule
+    \textbf{Concetto} & \textbf{In parole semplici} & \textbf{Esempio, errore tipico, regola}\\
+    \endfirsthead
+    \toprule
+    \textbf{Concetto} & \textbf{In parole semplici} & \textbf{Esempio, errore tipico, regola}\\
+    \endhead
+    \bottomrule
+    \endfoot
 
-Because \texttt{PRIMASK} is a core register, C cannot access it directly. It requires dedicated assembly instructions:
+    \grp{1. Polling, interrupt e convenzione di chiamata}
+        Polling vs interrupt
+        & \emph{Polling}: la CPU legge di continuo il registro \texttt{STATE} del device finché è pronto. \emph{Interrupt}: il device manda un segnale solo quando serve. La CPU si ferma, esegue l'\emph{handler} e riprende esattamente da dove era.
+        & \esem 10 bit a 115\,200 baud durano $\approx$ 87~$\mu$s, cioè \textbf{2\,170 cicli} a 25~MHz, tutti sprecati nel polling.\nl
+        \regl latenza: polling fino a 1 iterazione, interrupt $\sim$12 cicli (Cortex-M3), ma servono handler, protezione dei dati e priorità.\nl
+        \regl \texttt{kprintf} resta in polling: deve stampare anche in \texttt{HardFault}, dove gli interrupt normali sono bloccati.\rr
+        AAPCS\sig{Procedure Call Standard for the Arm Architecture}
+        & Le regole con cui C e Assembly si passano i dati. Ogni registro ha un ruolo preciso: chi lo può sovrascrivere e chi deve rimetterlo a posto.
+        & \regl \texttt{r0--r3}: parametri (\texttt{r0} anche valore di ritorno), \textbf{caller-saved}. \texttt{r12}: scratch, caller-saved.\nl
+        \regl \texttt{r4--r11}: \textbf{callee-saved}, se li usi fai \texttt{push} e \texttt{pop}.\nl
+        \regl \texttt{lr}: indirizzo di ritorno, se chiami un'altra funzione salvalo prima. \texttt{sp}: sempre multiplo di 8.\\
+
+    \grp{2. Gestire gli interrupt da Assembly}
+        PRIMASK
+        & Interruttore generale a 1 bit della CPU: \texttt{1} = interrupt bloccati, \texttt{0} = CPU in ascolto. Il C non può toccare i registri interni, servono istruzioni Assembly.
+        & \esem \texttt{mrs r0, primask} legge, \texttt{msr primask, r0} scrive, \texttt{cpsid i} / \texttt{cpsie i} disabilita / abilita gli interrupt globali.\rr
+        \texttt{irq\_save} e \texttt{irq\_restore}
+        & Servono a proteggere un pezzo di codice, anche quando le protezioni sono annidate. Prima si salva lo stato di PRIMASK, poi lo si ripristina.
+        & \esem \texttt{irq\_save()} mette il vecchio PRIMASK in \texttt{r0} e maschera. \texttt{irq\_restore(old)} lo rimette. Il test stampa \texttt{0}. In GDB, dopo \texttt{finish}: \texttt{r0 = 0x0}, PRIMASK = 1.\nl
+        \attn \texttt{cpsid} e \texttt{cpsie} nudi: la funzione interna riabilita gli interrupt troppo presto e distrugge la protezione di quella esterna.\nl
+        \regl usano solo \texttt{r0} e \texttt{lr} (caller-saved): niente \texttt{push} e \texttt{pop}.\\
+
+    \grp{3. Entrata e uscita da un'eccezione}
+        Stacking automatico
+        & Prima della prima istruzione del handler, l'hardware fa tre cose: (1) mette 8 word (il \emph{frame}) sullo stack, (2) scrive \texttt{EXC\_RETURN} in \texttt{lr}, (3) legge l'indirizzo dalla vector table e salta, in Handler mode.
+        & \esem il frame, da \texttt{sp+0} a \texttt{sp+28}: \texttt{r0, r1, r2, r3, r12, LR, PC, xPSR}.\nl
+        \regl sono esattamente i registri caller-saved dell'AAPCS: l'handler è una \textbf{normale funzione C} (es. \texttt{void SysTick\_Handler(void)}). Lo stack resta allineato a 8 byte (\texttt{STKALIGN}).\rr
+        \texttt{EXC\_RETURN}
+        & Dentro il handler, \texttt{lr} non contiene un vero indirizzo ma un valore \texttt{0xFFFFFF..}, in una zona senza codice. Con \texttt{bx lr} la CPU lo riconosce, toglie il frame dallo stack e riprende dal \texttt{PC} salvato.
+        & \esem \texttt{0xFFFFFFF9}: Thread mode, Main stack (l'unico usato per ora). \texttt{0xFFFFFFF1}: Handler mode, Main stack. \texttt{0xFFFFFFFD}: Thread mode, Process stack.\nl
+        \regl il handler C finisce con un \texttt{bx lr} ordinario: la magia è tutta nel valore di \texttt{lr}.\rr
+        Tail-chaining e late arrival
+        & Due ottimizzazioni hardware per eccezioni vicine, senza intervento del software.
+        & \esem \emph{tail-chaining}: se un'eccezione è pendente quando un handler finisce, si salta direttamente al suo handler senza fare pop e push del frame ($\sim$6 cicli invece di 24).\nl
+        \esem \emph{late arrival}: se durante lo stacking arriva un'eccezione più urgente, si usa il frame già in costruzione, si esegue prima quella, poi si fa tail-chain.\nl
+        \regl in entrambi i casi un solo frame descrive il codice originale interrotto.\\
+
+    \grp{4. SysTick: il battito del sistema}
+        SysTick
+        & Timer a 24 bit che conta alla rovescia, presente in ogni Cortex-M agli stessi indirizzi. Ogni volta che arriva a 0 genera un'eccezione: è la \textbf{preemption hardware}, che ridà il controllo al kernel anche se un programma va in loop infinito.
+        & \esem \texttt{CTRL} \texttt{0xE000E010} (bit 0 ENABLE, bit 1 TICKINT, bit 2 CLKSOURCE, bit 16 COUNTFLAG), \texttt{LOAD} \texttt{0xE000E014}, \texttt{VAL} \texttt{0xE000E018}, \texttt{CALIB} \texttt{0xE000E01C}.\nl
+        \esem avvio: \texttt{LOAD}, \texttt{VAL = 0}, \texttt{CTRL = 7}.\nl
+        \regl periodo = LOAD + 1 cicli. Priorità \texttt{0xE0} (la meno urgente). Nessun acknowledge: il pending si cancella da solo.\rr
+        Scelta del tick
+        & \textbf{LOAD = f / rate $-$ 1}. A 25~MHz e 100~Hz: $25\,000\,000 / 100 - 1 = 249\,999$ (\texttt{0x3D08F}), che entra nei 24 bit. Tick veloce: più precisione ma più overhead. Tick lento: meno overhead ma meno risoluzione.
+        & \esem un tick da 1~ms costa 1\,000 entrate e uscite al secondo anche a riposo, e in QEMU va $\sim$26\% più lento del tempo reale.\nl
+        \regl il kernel usa \textbf{10~ms (100~Hz)}.\rr
+        Uptime e wraparound
+        & Il handler somma \texttt{TICK\_MS} a \texttt{uptime\_ms}, che è \texttt{volatile} perché cambia in modo asincrono. La lettura è un solo accesso a 32 bit, quindi atomica. Dopo $\sim$49,7 giorni il contatore riparte da 0.
+        & \esem \texttt{start = 0xFFFFFF00}, \texttt{now = 0x64}: \texttt{now - start = 0x164} (356~ms), grazie all'aritmetica modulo $2^{32}$.\nl
+        \regl misura sempre il tempo con \texttt{now - start >= delay}, in unsigned.\rr
+        \texttt{wfi}\sig{Wait For Interrupt}
+        & Istruzione che mette la CPU in sleep finché non c'è un'eccezione pendente.
+        & \regl un idle loop con \texttt{wfi} dentro un \texttt{for(;;)} gira una volta per interrupt, invece di milioni di controlli inutili: risparmia energia e resta reattivo.\\
+
+    \grp{5. NVIC e vector table}
+        NVIC\sig{Nested Vectored Interrupt Controller}
+        & Il portiere tra le periferiche esterne e la CPU: gestisce abilitazione e priorità delle 32 linee (IRQ 0--31). SysTick non passa di qui: è un'eccezione interna al core.
+        & \esem UART0 RX = IRQ~0, UART0 TX = IRQ~1. L'IRQ $n$ è l'eccezione $16+n$, con vettore a offset $4 \times (16+n)$: UART0 TX $\rightarrow$ \texttt{0x44}.\nl
+        \esem \texttt{ISER} \texttt{0xE000E100} abilita, \texttt{ICER} \texttt{0xE000E180} disabilita, \texttt{ISPR} \texttt{0xE000E200} forza il pending, \texttt{IPR} \texttt{0xE000E400} imposta la priorità (valore basso = più urgente).\nl
+        \regl scrivere 1 agisce, scrivere 0 non fa nulla: si scrive direttamente, senza read-modify-write.\rr
+        I tre gate
+        & Un interrupt arriva alla CPU solo se supera tre condizioni indipendenti.
+        & \regl \textbf{Device}: periferica configurata (es. \texttt{TXIRQEN} in \texttt{CTRL}). \textbf{NVIC}: linea abilitata con \texttt{ISER}. \textbf{CPU}: PRIMASK = 0 e priorità \emph{strettamente} maggiore del codice in esecuzione.\nl
+        \attn se manca il gate 1 o il 2, l'interrupt è ignorato in silenzio: stesso sintomo.\rr
+        Regola d'oro: acknowledge
+        & Le linee NVIC sono \emph{level-sensitive}: il device tiene la linea alta finché il suo flag resta acceso.
+        & \regl il handler deve \textbf{cancellare il flag nel device} prima di tornare.\nl
+        \attn con \texttt{bx lr} senza ack, l'interrupt riscatta subito, all'infinito.\nl
+        \esem \texttt{INTSTATUS} è write-1-to-clear: \texttt{CMSDK\_UART0->INTSTATUS = UART\_INT\_TX;} cancella il bit 0 e lascia gli altri. Se più device condividono una linea, il handler controlla lo stato di tutti.\rr
+        Vector table
+        & 16 slot del core + 32 IRQ = 48 word = 192 byte (\texttt{0xC0}). Gli slot inutilizzati puntano a \texttt{Default\_Handler}.
+        & \esem \texttt{UART0TX\_Handler} = IRQ~1 (word 17), \texttt{TIMER0\_Handler} = IRQ~8 (word 24). In GDB: \texttt{x/4wx 0x40}.\nl
+        \regl i nomi sono \texttt{.weak} + \texttt{.thumb\_set}: una funzione C con lo stesso nome sostituisce il default.\\
+
+    \grp{6. Concorrenza e dati condivisi}
+        Race condition
+        & Con gli interrupt, \texttt{main} può essere fermato in qualsiasi istante, anche a metà di una riga C. \texttt{count++} sono tre istruzioni: \texttt{ldr}, \texttt{adds}, \texttt{str}.
+        & \esem \texttt{main} legge 5, scatta l'interrupt che scrive 6, \texttt{main} riprende con il vecchio 5 e scrive 6: il lavoro del handler è perso (\emph{lost update}).\rr
+        Sezione critica
+        & Piccolo blocco in cui la CPU ignora gli interrupt, racchiuso tra \texttt{irq\_save()} e \texttt{irq\_restore()}. Un interrupt in arrivo resta pendente fino al ripristino.
+        & \regl \emph{asimmetria}: solo \texttt{main} si protegge, il handler non può essere interrotto da \texttt{main}.\nl
+        \regl \emph{brevità}: niente delay o loop dentro.\nl
+        \regl \emph{nesting}: chiudi sempre con \texttt{irq\_restore(s)}, mai con un enable grezzo.\rr
+        Ring buffer
+        & Array circolare in cui \texttt{main} (producer) deposita i caratteri e il handler (consumer) li preleva. \texttt{head} è scritto solo da \texttt{main}, \texttt{tail} solo dal handler, entrambi \texttt{volatile}.
+        & \esem \texttt{TX\_BUF\_SIZE = 64}. Indice successivo: \texttt{(i+1) \& (N-1)}. Vuoto: \texttt{head == tail}. Pieno: \texttt{((head+1) \& (N-1)) == tail}.\nl
+        \regl dimensione potenza di 2: l'\texttt{\&} sostituisce il modulo. Si usano \textbf{63 slot su 64}, per non confondere pieno e vuoto.\\
+
+    \grp{7. Driver UART a interrupt}
+        \texttt{uart\_write} (producer)
+        & Dentro una sezione critica copia nel buffer quanti caratteri riesce e restituisce quanti ne ha accettati. Se l'UART è ferma non genera interrupt, quindi va avviata a mano.
+        & \regl \textbf{Priming Rule}: se \texttt{!tx\_busy \&\& !tx\_empty}, abilita \texttt{TXIRQEN}, attende \texttt{TXBF} libero, scrive il primo byte e imposta \texttt{tx\_busy = 1}. Senza il primo byte non scatta nessun interrupt.\rr
+        \texttt{UART0TX\_Handler} (consumer)
+        & Scatta da solo ogni volta che un byte lascia l'hardware. Non serve \texttt{irq\_save}: \texttt{main} non può interromperlo.
+        & \regl (1) ack: \texttt{INTSTATUS = UART\_INT\_TX}. (2) Se il buffer non è vuoto, invia il byte successivo. (3) Altrimenti spegne \texttt{TXIRQEN} e imposta \texttt{tx\_busy = 0}.\rr
+        \texttt{uart\_init}
+        & Azzera lo stato del buffer e apre il gate NVIC.
+        & \esem \texttt{head = tail = tx\_busy = 0}. \texttt{NVIC->IPR[UART0TX\_IRQn] = 0xC0} (meno urgente delle System Call, più urgente di SysTick). Abilita l'IRQ~1 con \texttt{ISER}.\rr
+        Test dei 160 byte
+        & Il messaggio (4 righe da 40 byte) è più grande del buffer. Se \texttt{uart\_write} accetta 0 byte, \texttt{main} fa \texttt{wfi} e il handler lo risveglia quando libera spazio.
+        & \esem \texttt{uart\_write} gira 3 volte (63 + 63 + 34 byte), il handler scatta 160 volte e \texttt{main} dorme quasi sempre.\\
+
+    \grp{8. Dove siamo arrivati}
+        Stato a fine Unità 2
+        & Driver e kernel completi (\texttt{uart.c}, \texttt{systick.c}, \texttt{irq.s}, \texttt{startup.s}), ma tutto gira ancora in modalità privileged dentro \texttt{main}.
+        & \esem \texttt{main} stampa il banner, avvia SysTick, invia i 160 byte, poi stampa l'uptime ogni secondo.\nl
+        \regl Unità 3: ambiente unprivileged e confine sicuro tra kernel e applicazione.\\
+\end{longtable}
+}
+% ======================== FINE TABELLA ========================
+
+\subsection{Unità 3}
+\subsection*{L'idea di fondo}
+Fino alla Unit~2 tutto girava in modalità privilegiata dentro \texttt{main}. Ora si costruisce un vero confine: l'applicazione gira \textbf{non privilegiata} e può raggiungere l'hardware solo \textit{chiedendo} al kernel, tramite le \textbf{system call}, costruite sull'eccezione \texttt{svc}.
+ 
+Dalla Week 2 ci portiamo quattro fatti:
 \begin{itemize}
-    \item \texttt{mrs r0, primask}: Move to Register from Special register (reads \texttt{PRIMASK} into \texttt{r0}).
-    \item \texttt{msr primask, r0}: Move to Special register from Register (writes \texttt{r0} into \texttt{PRIMASK}).
-    \item \texttt{cpsid i} / \texttt{cpsie i}: Change Processor State (Disable / Enable Interrupts).
+    \item \texttt{main} parte privilegiato. Con \texttt{CONTROL.nPRIV = 1} si passa al Thread mode non privilegiato, e il passaggio è a senso unico, perché modificare \texttt{CONTROL} è a sua volta un'operazione privilegiata.
+    \item Il codice non privilegiato che tocca lo System Control Space (SysTick, NVIC, SCB) causa un \textbf{BusFault}.
+    \item \texttt{svc \#n} è sempre permessa e genera l'eccezione \textbf{SVCall}.
+    \item Ogni handler gira in Handler mode (privilegiato). Al ritorno la CPU riparte subito dopo la \texttt{svc} e torna non privilegiata.
 \end{itemize}
-
-\subsubsection{The Nesting Problem}
-A naive approach to critical sections is executing \texttt{cpsid i} at the start and \texttt{cpsie i} at the end. However, if a function that masks interrupts calls another function that also masks them, the inner function's \texttt{cpsie i} would unmask interrupts too early upon exit, destroying the outer function's critical section. 
-
-To solve this safely, we design an API that saves and restores the state:
-\begin{lstlisting}[language=C]
-uint32_t irq_save( void );          /* mask interrupts, return the old PRIMASK */
-void irq_restore( uint32_t old );   /* restore PRIMASK to the old state */
-\end{lstlisting}
-Nested calls will correctly maintain the masked state until the outermost function restores the original unmasked value.
-
-\subsubsection{Implementing \texttt{irq\_save} and \texttt{irq\_restore} in Assembly}
-We implement these in \texttt{kernel/irq.s}. Following the AAPCS, \texttt{irq\_save} leaves the resulting 32-bit \texttt{PRIMASK} state in \texttt{r0} before branching back. \texttt{irq\_restore} receives its argument in \texttt{r0}. Both only use \texttt{r0} and \texttt{lr} (Caller-Saved), so they do not need to save Callee-Saved registers.
-
-\begin{lstlisting}
-    .syntax unified             /* modern ARM assembly syntax */
-    .cpu cortex-m3              /* only instructions this CPU has */
-    .thumb                      /* Thumb code */
-    .section .text,"ax",%progbits
-
-/* uint32_t irq_save(void) */
-    .global irq_save            /* visible to C */
-    .type irq_save, %function   /* it is code */
-    .thumb_func                 /* Thumb: bit 0 set in its address */
-irq_save:
-    mrs r0, primask             /* old = PRIMASK; r0 = return value */
-    cpsid i                     /* PRIMASK = 1: interrupts masked */
-    bx lr                       /* return old (in r0) */
-    .size irq_save, . - irq_save
-
-/* void irq_restore(uint32_t old) */
-    .global irq_restore         /* visible to C */
-    .type irq_restore, %function 
-    .thumb_func                 
-irq_restore:
-    msr primask, r0             /* PRIMASK = old (first argument, r0) */
-    bx lr                       /* return */
-    .size irq_restore, . - irq_restore
-\end{lstlisting}
-
-\paragraph{Code Breakdown:}
+ 
+Quindi \texttt{svc} è l'unica porta controllata verso il codice privilegiato: l'app bussa, il kernel decide. In Week 2 \texttt{SVC\_Handler} faceva un solo lavoro fisso; ora diventa un'interfaccia che smista più servizi, riceve argomenti e restituisce risultati.
+ 
+\subsection*{La regola: l'app chiede, il kernel fa}
+L'app non chiama mai un driver e non tocca mai un registro hardware. Ogni I/O attraversa il confine con una system call, come in Linux, dove \texttt{printf} finisce in \texttt{write}. Il percorso completo è:
+ 
+\texttt{app\_main} $\rightarrow$ \texttt{printf} $\rightarrow$ \texttt{write\_all} $\rightarrow$ \texttt{sys\_write} $\rightarrow$ \texttt{svc \#1} $\rightarrow$ \textbf{confine} $\rightarrow$ \texttt{SVC\_Handler} $\rightarrow$ \texttt{svc\_dispatch} $\rightarrow$ \texttt{table[n]} $\rightarrow$ \texttt{uart\_write} + \texttt{UART0TX\_Handler} $\rightarrow$ registri UART0 a \texttt{0x40004000}.
+ 
+Sopra il confine si è in Thread mode non privilegiato, sotto in Handler mode privilegiato. I file coinvolti sono \texttt{src/app.c}, \texttt{lib/printf.c}, \texttt{lib/syscalls.s}, \texttt{kernel/svc\_entry.s}, \texttt{kernel/syscall.c} e \texttt{drivers/uart.c}.
+ 
+\paragraph*{Protezione logica e fisica.} Senza MPU l'hardware blocca solo l'accesso allo System Control Space (protezione \textit{fisica}). I registri UART restano raggiungibili dall'utente, quindi tenerli lontani è solo una regola \textit{logica} del nostro design. Il confine però è necessario, perché il driver UART usa \texttt{irq\_save()} (cioè \texttt{cpsid i}) per proteggere il ring buffer. In modalità non privilegiata \texttt{cpsid} viene ignorata in silenzio: il driver crederebbe di essere protetto con gli interrupt ancora attivi.
+ 
+\subsection*{ABI e servizi}
+Un'API definisce le regole a livello di codice C. Un'\textbf{ABI} è il contratto a basso livello tra compilatore e hardware, fatto di registri e istruzioni, perché dopo la compilazione i nomi spariscono. Per le system call dice:
 \begin{itemize}
-    \item \texttt{.global}, \texttt{.type}, \texttt{.thumb\_func}, \texttt{.size}: Directives defining visibility, executable Thumb status, and size.
-    \item \texttt{mrs r0, primask}: Copies \texttt{PRIMASK} into \texttt{r0}, setting up the return value.
-    \item \texttt{cpsid i}: Sets \texttt{PRIMASK} to 1, immediately masking configurable interrupts. 
-    \item \texttt{msr primask, r0}: Moves the saved state (\texttt{r0}) back into \texttt{PRIMASK}. If the state was 0, interrupts turn back on; if 1, they remain disabled.
-    \item \texttt{bx lr}: Branches to the Link Register, returning execution to C.
+    \item il \textbf{numero del servizio} è dentro l'istruzione \texttt{svc \#n};
+    \item gli \textbf{argomenti} vanno in \texttt{r0}, \texttt{r1}, \texttt{r2} (AAPCS);
+    \item il \textbf{risultato} torna in \texttt{r0}, dove il chiamante C lo cerca.
 \end{itemize}
-
-\subsubsection{Testing the API in C}
-Define the prototypes in \texttt{kernel/irq.h}:
-
-\begin{lstlisting}[language=C]
-#ifndef IRQ_H
-#define IRQ_H
-#include <stdint.h>
-
-uint32_t irq_save(void);
-void irq_restore(uint32_t state);
-
-#endif
-\end{lstlisting}
-
-In \texttt{main.c}, include \texttt{kernel/irq.h} and test the API:
-
-\begin{lstlisting}[language=C]
-#include "kernel/irq.h"
-
-/* Inside main() */
-uint32_t old_state = irq_save();      /* Save current state and disable interrupts */
-
-/* Right here, interrupts are masked. */
-
-irq_restore(old_state);               /* Restore the state back to what it was */
-
-kprintf("PRIMASK before irq_save was: %u\n", old_state);
-\end{lstlisting}
-
-Executing this prints: \texttt{PRIMASK before irq\_save was: 0}. This confirms the CPU started with interrupts enabled, and our assembly safely disabled and cleanly restored that state. 
-
-\subsubsection{Watching the AAPCS Across the Call (GDB)}
-We can observe the AAPCS mechanics in GDB:
-\begin{lstlisting}[language=bash]
-(gdb) break irq_save
-(gdb) continue
-(gdb) p/x $lr
-(gdb) info registers primask
-(gdb) finish
-(gdb) info registers r0 primask
-\end{lstlisting}
-
-At the breakpoint, \texttt{lr} holds the return address written by \texttt{bl} (the address is odd, e.g., \texttt{0x4a9}, because bit 0 marks Thumb code). \texttt{PRIMASK} starts as \texttt{0}. After \texttt{finish}, \texttt{r0} contains \texttt{0x0} (returned old value) and \texttt{PRIMASK} is \texttt{1} (masked). After \texttt{irq\_restore(old\_state)}, \texttt{PRIMASK} returns to \texttt{0}. Data traveled exactly as the AAPCS specifies via \texttt{r0}.
-
-\section{ARM Exception Entry and Return Mechanics}
-While we can wrap many features in simple C functions, handling exceptions requires a deep understanding of what the Cortex-M hardware does autonomously. When a hardware interrupt fires, the CPU abruptly pauses the current execution to jump to an Exception Handler. Before executing the handler's first instruction, the hardware performs three critical operations:
+ 
+Per il programmatore una syscall sembra una normale funzione C, ma sotto scatta una \texttt{svc} invece di una \texttt{bl}. Le costanti (\texttt{SYS\_WRITE}, \texttt{SYS\_READ}, \texttt{SYS\_UPTIME}) stanno in \texttt{lib/syscalls.h}, condiviso da utente e kernel. I servizi sono:
+\begin{itemize}
+    \item \textbf{1, \texttt{sys\_write(buf, len)}:} restituisce i byte accettati (da 0 a \texttt{len}) e passa da \texttt{uart\_write}.
+    \item \textbf{2, \texttt{sys\_read()}:} restituisce un byte oppure \texttt{-1} se non c'è nulla, via \texttt{uart\_getc\_polled}.
+    \item \textbf{3, \texttt{sys\_uptime()}:} restituisce i ms dal boot, via \texttt{systick\_uptime\_ms}.
+    \item \textbf{0 e $\ge 4$:} servizio sconosciuto, restituiscono \texttt{-1}.
+\end{itemize}
+ 
+Nessun servizio aspetta: \texttt{sys\_write} prende quello che entra nel ring buffer TX e torna subito. L'attesa spetta al chiamante non privilegiato.
+ 
+\subsection*{Stub ed Exception Frame}
+Lo \textbf{stub} è una minuscola funzione assembly in \texttt{lib/syscalls.s}: due istruzioni, \texttt{svc \#n} e \texttt{bx lr}. Il viaggio di una chiamata, per esempio \texttt{sys\_write}, è questo:
 \begin{enumerate}
-    \item It pushes exactly 8 words (the exception frame) onto the current stack.
-    \item It writes a special signature value, called \texttt{EXC\_RETURN}, into the Link Register (\texttt{lr}).
-    \item It reads the specific handler's memory address from the vector table and branches to it, automatically elevating to privileged Handler mode.
+    \item \textbf{C prepara i dati:} mette gli argomenti in \texttt{r0} e \texttt{r1}.
+    \item \textbf{Lo stub esegue \texttt{svc \#1}:} l'hardware sospende l'app e salva 8 registri sullo stack, formando l'\textbf{Exception Frame}.
+    \item \textbf{Il kernel lavora:} vede il frame come array \texttt{uint32\_t *frame}, dove \texttt{frame[0]} è il vecchio \texttt{r0} e \texttt{frame[1]} il vecchio \texttt{r1}. Legge gli argomenti, scrive sulla UART e mette il risultato in \texttt{frame[0]}.
+    \item \textbf{L'hardware ripristina:} rimette il frame nei registri, quindi \texttt{r0} contiene la risposta del kernel.
+    \item \textbf{Lo stub fa \texttt{bx lr}:} C trova il valore in \texttt{r0} senza sapere nulla del passaggio nel kernel.
 \end{enumerate}
-
-\subsection{The Automatic Hardware State Save (Stacking)}
-The 8 words pushed to the stack form the stacked frame. Because the stack grows downwards, the hardware creates the following memory layout relative to the new Stack Pointer (\texttt{sp}):
+ 
+Il numero dopo \texttt{svc} è codificato nell'opcode, quindi deve essere un \textbf{letterale} (1, 2, 3). L'assembly non legge le macro C, e i numeri vanno tenuti allineati a mano.
+ 
+\subsection*{Entry point e dispatcher}
+\texttt{SVC\_Handler} (\texttt{kernel/svc\_entry.s}) deve essere \textbf{in assembly}. Sono solo due istruzioni:
 \begin{itemize}
-    \item \texttt{sp + 28}: \texttt{xPSR} (Status flags, Thumb bit)
-    \item \texttt{sp + 24}: \texttt{PC} (Program Counter: where the interrupted code will resume)
-    \item \texttt{sp + 20}: \texttt{LR} (The interrupted code's Link Register)
-    \item \texttt{sp + 16}: \texttt{r12}
-    \item \texttt{sp + 12}: \texttt{r3}
-    \item \texttt{sp +  8}: \texttt{r2}
-    \item \texttt{sp +  4}: \texttt{r1}
-    \item \texttt{sp +  0}: \texttt{r0} $\leftarrow$ \texttt{sp} when the handler starts
+    \item \texttt{mrs r0, msp} mette in \texttt{r0} l'indirizzo del frame;
+    \item \texttt{b svc\_dispatch} salta al dispatcher in C.
 \end{itemize}
-
-Crucially, these registers (\texttt{r0}--\texttt{r3}, \texttt{r12}, and \texttt{lr}) perfectly match the AAPCS \textit{Caller-Saved} set. Because \texttt{r4}--\texttt{r11} are \textit{Callee-Saved}, any standard C function invoked during the interrupt will safely preserve them before modifying them. Together, the hardware stacking and the AAPCS software rules guarantee that the interrupted application finds all its registers entirely unmodified upon return. This elegant design allows an interrupt handler to be written as a standard C function (e.g., \texttt{void SysTick\_Handler(void)}) without requiring specialized assembly wrappers or keywords. Additionally, the hardware ensures the stack pointer remains 8-byte aligned upon entry, adhering to the \texttt{STKALIGN} bit configured in the CCR during boot.
-
-\subsection{Exception Return: \texttt{EXC\_RETURN}}
-Inside the exception handler, the \texttt{lr} does not contain a standard return memory address. Instead, it holds the \texttt{EXC\_RETURN} value, which begins with \texttt{0xFFFFFF...}---an address region deliberately containing no executable code. When the handler concludes and executes a return instruction (like \texttt{bx lr} or \texttt{pop \{..., pc\}}), the CPU hardware intercepts this special value and initiates an \textbf{exception return}. It pops the 8-word frame from the stack, reverts to the previous execution mode, and seamlessly resumes at the stacked \texttt{PC}.
-
-\begin{table}[h!]
-    \centering
-    \begin{tabular}{lll}
-        \toprule
-        \textbf{\texttt{EXC\_RETURN}} & \textbf{Return To} & \textbf{Stack Used} \\
-        \midrule
-        \texttt{0xFFFFFFF9} & Thread mode (normal code, e.g., \texttt{main}) & Main stack \\
-        \texttt{0xFFFFFFF1} & Handler mode (returning to a preempted handler) & Main stack \\
-        \texttt{0xFFFFFFFD} & Thread mode & Process stack \\
-        \bottomrule
-    \end{tabular}
-\end{table}
-
-While the Cortex-M supports a secondary Process Stack Pointer, this kernel exclusively uses the Main stack for now. Therefore, returning to Thread mode will consistently utilize \texttt{0xFFFFFFF9}. The compiled C handler ends with an ordinary \texttt{bx lr}; the magic lies entirely in the value held within the Link Register.
-
-\subsection{Tail-Chaining and Late Arrival}
-To optimize back-to-back exceptions, the hardware utilizes two advanced mechanisms that require no software intervention:
+ 
+In C il compilatore inserirebbe un prologo (es.\ \texttt{push \{r7, lr\}}) che sposta \texttt{sp}, e cambierebbe con \texttt{-O0} e \texttt{-O2}: perderemmo l'indirizzo del frame. Si usa \texttt{b} e non \texttt{bl}, perché \texttt{bl} sovrascriverebbe \texttt{lr} distruggendo \texttt{EXC\_RETURN} (\texttt{0xFFFFFFF9}). Con \texttt{b}, quando \texttt{svc\_dispatch} ritorna parte direttamente il ritorno da eccezione.
+ 
+\paragraph*{Estrarre il numero.} In Thumb \texttt{svc \#n} è un'istruzione a 16 bit: byte alto \texttt{0xDF} (opcode), byte basso \texttt{n}, quindi \texttt{svc \#1} = \texttt{0xDF01}. Il Cortex-M3 è little-endian, perciò in memoria si trova prima \texttt{n} e poi \texttt{0xDF} (\texttt{01 DF}). Il frame è \texttt{frame[0..7]} = \texttt{r0--r3, r12, lr, pc, xPSR}. Il \texttt{PC} salvato (\texttt{frame[6]}) punta all'istruzione dopo la \texttt{svc}, quindi \texttt{0xDF} sta a \texttt{PC - 1} e \texttt{n} a \texttt{PC - 2}. Gli argomenti sono in \texttt{frame[0]}, \texttt{frame[1]}, \texttt{frame[2]}.
+ 
+\paragraph*{Dispatcher.} In \texttt{kernel/syscall.c} c'è una tabella di puntatori a funzione con inizializzatori designati: l'indice è il numero del servizio, e l'indice 0 resta vuoto (\texttt{NULL}). \texttt{svc\_dispatch} legge \texttt{n = ((uint8\_t *) frame[6])[-2]}. Se \texttt{n >= TABLE\_SIZE} o \texttt{table[n] == 0}, scrive \texttt{-1} in \texttt{frame[0]}. Altrimenti fa \texttt{frame[0] = table[n](frame[0], frame[1], frame[2])}. Il risultato va in \texttt{frame[0]} perché, al ritorno, l'hardware ripopola \texttt{r0} proprio da lì: lasciarlo nel \texttt{r0} fisico non servirebbe.
+ 
+\paragraph*{Prove.}
 \begin{itemize}
-    \item \textbf{Tail-chaining:} If a handler completes while another exception is pending, the CPU skips the redundant process of popping the 8-word frame only to immediately push it again. Instead, it branches directly to the pending handler, reducing latency to about 6 cycles (down from 24) on a Cortex-M3.
-    \item \textbf{Late arrival:} If a higher-priority exception arrives while the CPU is actively stacking the frame for a lower-priority exception, the CPU simply uses the partially completed frame, executes the higher-priority handler first, and then tail-chains to the lower-priority one.
+    \item \textit{Prima syscall:} in \texttt{main} si sostituisce \texttt{systick\_uptime\_ms()} con \texttt{sys\_uptime()}. L'output è identico, ma il percorso passa da \texttt{svc \#3}. \texttt{svc} funziona anche da privilegiato.
+    \item \textit{GDB:} con \texttt{break *SVC\_Handler}, \texttt{x/8wx \$sp} mostra il frame e \texttt{p/x \$lr} dà \texttt{0xFFFFFFF9}. Con \texttt{x/2bx ((unsigned *)\$sp)[6] - 2} si leggono \texttt{0x03} e \texttt{0xDF}, quindi \texttt{svc \#3} e $n = 3$ (\texttt{SYS\_UPTIME}). Con \texttt{stepi} due volte si entra in \texttt{svc\_dispatch}, e \texttt{finish} torna al \texttt{bx lr} di \texttt{sys\_uptime}.
 \end{itemize}
-In both scenarios, the single stacked frame explicitly describes the original code that was preempted.
-
-\section{The Heartbeat of the OS: The SysTick Timer}
-To build an operating system capable of measuring time and preempting tasks, a periodic interrupt is mandatory. The \textbf{SysTick} timer is a 24-bit down-counter permanently integrated into every Cortex-M core, mapped to the exact same memory addresses across all chips.
-
-\subsection{Hardware Preemption}
-If an OS relies entirely on cooperative software, an infinite loop in a user program would permanently hijack the CPU, deadlocking the system. SysTick prevents this through \textbf{hardware preemption}. By periodically firing an interrupt (e.g., every 10~ms), the hardware forcefully pauses the current execution and jumps to the kernel's \texttt{SysTick\_Handler}. This guarantees the OS regains control at fixed intervals to update the system clock, perform scheduling, or terminate rogue tasks. A hardware interrupt is the only mechanism powerful enough to definitively stop the CPU.
-
-\subsection{The SysTick Hardware Registers}
-The timer operates by counting down from a configured \texttt{LOAD} value to 0, reloading the \texttt{LOAD} value on the subsequent clock cycle. Consequently, exactly one period equals $\text{LOAD} + 1$ cycles.
-
-\begin{table}[h!]
-    \centering
-    \begin{tabular}{llp{9cm}}
-        \toprule
-        \textbf{Register} & \textbf{Address} & \textbf{Function} \\
-        \midrule
-        \textbf{\texttt{CTRL}} & \texttt{0xE000E010} & Bit 0: \textbf{ENABLE} the counter. Bit 1: \textbf{TICKINT} (raise the SysTick exception at 0). Bit 2: \textbf{CLKSOURCE} (1 = processor clock). Bit 16: \textbf{COUNTFLAG} (reads 1 if 0 was reached since last read). \\
-        \textbf{\texttt{LOAD}} & \texttt{0xE000E014} & 24-bit reload value (maximum \texttt{0xFFFFFF}). \\
-        \textbf{\texttt{VAL}} & \texttt{0xE000E018} & Current count. Writing any value resets it to 0. \\
-        \textbf{\texttt{CALIB}} & \texttt{0xE000E01C} & Read-only calibration data. Bits 23--0 (\textbf{TENMS}) hold the reload value for 10~ms on the reference clock. \\
-        \bottomrule
-    \end{tabular}
-\end{table}
-
-To initiate the timer, three stores are required:
-\begin{lstlisting}[language=c]
-SysTick->LOAD = 249999;          /* period: 250,000 cycles (10 ms at 25 MHz) */
-SysTick->VAL  = 0;               /* start from a clean count */
-SysTick->CTRL = SysTick_CTRL_ENABLE | SysTick_CTRL_TICKINT | SysTick_CTRL_CLKSOURCE; /* = 7 */
-\end{lstlisting}
-
-The SysTick priority is configured using the \texttt{SHPR} byte (set to \texttt{0xE0} during boot), ensuring it is the least urgent exception in the system. It requires no interrupt-controller setting and no explicit hardware acknowledgment; its pending state clears automatically when the handler starts. While the \texttt{CALIB} register allows portable code to achieve a 10~ms tick without knowing the board speed, we know our processor clock is 25~MHz, so we explicitly calculate the \texttt{LOAD} value using \texttt{CLKSOURCE = 1}.
-
-\subsection{Building the SysTick Driver}
-To integrate this hardware into our OS, we write a device driver, structured similarly to the UART driver. The API exposed in \texttt{drivers/systick.h} includes initialization and time-tracking functions:
-
-\begin{lstlisting}[language=c]
-void systick_init(void);
-uint32_t systick_uptime_ms(void);
-\end{lstlisting}
-
-\subsubsection{Choosing the Tick: Reload Value and Rate}
-The formula for the reload value is \textbf{LOAD = (f / rate) - 1}. With our processor frequency ($f$) at 25~MHz, if we want an interrupt frequency (rate) of 100~Hz (which equals 100 ticks per second, or one tick every 10~ms), the calculation is:
-$$ \text{LOAD} = \frac{25,000,000}{100} - 1 = 249,999 $$
-This value (\texttt{0x3D08F}) easily fits within the 24-bit limit of the \texttt{LOAD} register.
-
-Choosing the tick rate is a fundamental OS design trade-off:
+ 
+\subsection*{Dove funziona svc e perché il kernel non aspetta}
+SVCall ha priorità \texttt{0x80}. Un'eccezione può interrompere solo codice \textbf{meno urgente} (valore più alto = meno urgente). Quindi \texttt{svc} viene accettata:
 \begin{itemize}
-    \item A faster tick (e.g., 1~ms / 1,000~Hz) measures time more precisely but forces the CPU to process 1,000 exception entries and exits per second, wasting significant CPU time even when the system is idle.
-    \item A slower tick (e.g., 10~ms / 100~Hz) reduces interrupt overhead but lowers timing resolution.
+    \item da Thread mode (\texttt{app\_main}, \texttt{main});
+    \item dentro \texttt{SysTick\_Handler} (\texttt{0xE0}) e \texttt{UART0TX\_Handler} (\texttt{0xC0}), dove SVCall si annida.
 \end{itemize}
-Our kernel utilizes the classic \textbf{10~ms (100~Hz)} rate. In QEMU, this specific rate also has the practical benefit of keeping exact time against a physical wall clock, whereas a 1~ms tick runs approximately 26\% slower in real-world time due to emulation overhead.
-
-\subsubsection{Uptime in Milliseconds and Wraparound Safety}
-In \texttt{drivers/systick.c}, we maintain a global counter tracking the uptime in milliseconds. 
-\begin{lstlisting}[language=c]
-#include "drivers/systick.h"
-#include "cmsdk.h"
-
-#define CPU_CLOCK_HZ 25000000UL     /* processor clock: 25 MHz */
-#define TICK_MS 10
-
-static volatile uint32_t uptime_ms; /* changed by the handler */
-
-void systick_init( void )
-{
-    uptime_ms = 0;
-    SysTick->LOAD = CPU_CLOCK_HZ / ( 1000 / TICK_MS ) - 1;
-    SysTick->VAL = 0;               /* any write: counter = 0 */
-    SysTick->CTRL = SysTick_CTRL_ENABLE | SysTick_CTRL_TICKINT | SysTick_CTRL_CLKSOURCE;
-}
-
-void SysTick_Handler( void )
-{
-    uptime_ms += TICK_MS;           /* no acknowledge needed */
-}
-
-uint32_t systick_uptime_ms( void )
-{
-    return uptime_ms;               /* one 32-bit read: never torn */
-}
-\end{lstlisting}
-
-The variable \texttt{uptime\_ms} is strictly declared \texttt{volatile} because the \texttt{SysTick\_Handler} updates it entirely asynchronously. The getter function \texttt{systick\_uptime\_ms} performs a single 32-bit read, which is architecturally guaranteed to be atomic.
-
-Because \texttt{uptime\_ms} is a \texttt{uint32\_t}, it wraps from \texttt{0xFFFFFFFF} back to 0 after approximately 49.7 days. To safely measure elapsed time without wraparound bugs, the system must \textit{always} use unsigned subtraction:
-\begin{lstlisting}[language=c]
-if (now - start >= delay) { /* Safe */ }
-\end{lstlisting}
-If \texttt{start = 0xFFFFFF00} and the counter wraps such that \texttt{now = 0x00000064} (100), the calculation \texttt{now - start} safely evaluates to \texttt{0x164} (356 ms) thanks to modulo $2^{32}$ arithmetic.
-
-\subsubsection{\texttt{wfi}: An Idle Loop That Sleeps}
-With the hardware timer firing every 10~ms, we can efficiently halt the CPU when it has no immediate work using the \texttt{wfi} (Wait For Interrupt) assembly instruction. 
-\begin{lstlisting}[language=c]
-for ( ;; ) {
-    __asm volatile ( "wfi" );  /* sleep until the next interrupt */
-    /* ... check whether something has to be done ... */
-}
-\end{lstlisting}
-The \texttt{wfi} instruction instantly puts the processor into a low-power sleep state until any exception is pending. Instead of a polling loop running millions of useless checks per second, a \texttt{wfi} loop executes exactly once per interrupt, ensuring the OS remains highly responsive while saving power.
-
-\section{The Nested Vectored Interrupt Controller (NVIC)}
-While SysTick is an internal core exception, external peripheral interrupts (like the UART or timers on the APB bus) are managed by a memory-mapped I/O device called the \textbf{NVIC} (Nested Vectored Interrupt Controller).
-
-The NVIC sits between the peripherals and the CPU core as a gatekeeper and priority manager. On this board, it handles 32 lines (\textbf{IRQ 0 to IRQ 31}). For example, UART0 RX is IRQ 0 and UART0 TX is IRQ 1. 
-
-Recalling Unit 1 (\textbf{IRQ $n$ maps to exception $16 + n$}), the handler address resides at $4 \times (16 + n)$. For UART0 TX (IRQ 1), this is slot 17, at address \texttt{0x44}.
-
-The NVIC is controlled via specific memory-mapped registers:
-\begin{table}[h!]
-    \centering
-    \begin{tabular}{llp{8cm}}
-        \toprule
-        \textbf{Register} & \textbf{Address} & \textbf{Function (For IRQ $n$)} \\
-        \midrule
-        \textbf{\texttt{ISER}} & \texttt{0xE000E100} & \textbf{Interrupt Set-Enable.} Writing a 1 to bit $n \pmod{32}$ of word $n / 32$ enables the IRQ line. Writing 0 has no effect. \\
-        \textbf{\texttt{ICER}} & \texttt{0xE000E180} & \textbf{Interrupt Clear-Enable.} Writing a 1 disables the IRQ line. \\
-        \textbf{\texttt{ISPR}} & \texttt{0xE000E200} & \textbf{Interrupt Set-Pending.} Writing a 1 manually marks the interrupt as pending (simulating a hardware request). \\
-        \textbf{\texttt{IPR}}  & \texttt{0xE000E400} & \textbf{Interrupt Priority.} Configures priority level. Only the upper bits count; a lower number means a higher urgency. \\
-        \bottomrule
-    \end{tabular}
-\end{table}
-
-To configure priority and enable UART0 TX, we execute two simple stores. Because writing a 0 to \texttt{ISER} changes nothing, we do not need a read-modify-write pattern:
-\begin{lstlisting}[language=C]
-NVIC->IPR[UART0TX_IRQn] = 0xC0;                               /* priority of IRQ 1 */
-NVIC->ISER[UART0TX_IRQn / 32] = 1UL << ( UART0TX_IRQn % 32 ); /* enable IRQ 1 */
-\end{lstlisting}
-
-\subsection{The Three Gates and the Golden Rule}
-An external device's interrupt will only fire if three conditions---the \textit{three gates}---are simultaneously true:
+ 
+Va invece in \textbf{HardFault}:
+\begin{itemize}
+    \item dentro \texttt{SVC\_Handler} e ciò che chiama (\texttt{0x80});
+    \item in un fault handler (\texttt{0x00} o più urgente);
+    \item con \texttt{PRIMASK = 1}, cioè tra \texttt{irq\_save} e \texttt{irq\_restore}.
+\end{itemize}
+ 
+Per questo il kernel tiene il suo \texttt{kprintf} a polling, indipendente dalle syscall.
+ 
+Il kernel non deve mai aspettare dentro un handler. Se \texttt{sys\_write\_impl} ciclasse dentro SVCall (\texttt{0x80}) in attesa che il buffer TX si svuoti, l'interrupt UART TX (\texttt{0xC0}, meno urgente) non potrebbe mai partire e il buffer non si svuoterebbe mai: deadlock. Anche SysTick (\texttt{0xE0}) sarebbe bloccato e l'orologio si fermerebbe. Quindi il kernel accetta ciò che entra e torna subito, e l'attesa (\texttt{wfi}) si fa in Thread mode, dove ogni interrupt può girare.
+ 
+\subsection*{Libreria utente}
+\texttt{printf} in \texttt{lib/printf.c} lavora in due passi: il motore condiviso \texttt{vformat} formatta in un buffer locale da 64 byte sullo stack utente, poi \texttt{sys\_write} lo invia. Il confronto con \texttt{kprintf} è netto:
+\begin{itemize}
+    \item \texttt{kprintf} è privilegiato, usa il driver in polling direttamente, aspetta in busy-wait e funziona anche dentro handler e HardFault, perché non usa \texttt{svc}.
+    \item \texttt{printf} è non privilegiato, passa da \texttt{vformat} $\rightarrow$ \texttt{sys\_write} $\rightarrow$ \texttt{svc} $\rightarrow$ ring buffer, aspetta con \texttt{wfi} e dentro un handler va in HardFault.
+\end{itemize}
+ 
+\paragraph*{\texttt{write\_all}} cicla finché tutti i byte sono inviati: se \texttt{sys\_write} restituisce 0, il buffer è pieno e fa \texttt{wfi} invece di consumare CPU. La CPU dorme finché un interrupt (es.\ UART TX che libera spazio) la risveglia.
+ 
+\paragraph*{\texttt{sleep\_ms(ms)}} salva \texttt{start = sys\_uptime()} e, finché \texttt{sys\_uptime() - start < ms}, fa \texttt{wfi}. La sottrazione unsigned regge il wraparound ($\sim$49,7 giorni). SysTick scatta ogni 10~ms, quindi ogni \texttt{wfi} si risveglia almeno così spesso. Il kernel non viene mai bloccato.
+ 
+\subsection*{Avvio e applicazione}
+\texttt{src/main.c} è l'inizializzatore del \textbf{kernel}: gira privilegiato una sola volta, in cinque passi.
 \begin{enumerate}
-    \item \textbf{The Device Gate:} The peripheral is configured to generate interrupts (e.g., \texttt{TXIRQEN} or \texttt{RXIRQEN} in the UART's \texttt{CTRL} register).
-    \item \textbf{The NVIC Gate:} The specific IRQ line is unmasked (via \texttt{ISER}).
-    \item \textbf{The CPU Gate:} The global mask is off (\texttt{PRIMASK} = 0) and the interrupt priority is strictly more urgent than the currently running code.
+    \item \texttt{uart\_init()}, per primo, così si può stampare.
+    \item \texttt{kprintf} del banner, in polling.
+    \item \texttt{systick\_init()}, il tick da 10~ms.
+    \item \textbf{Privilege drop:} \texttt{CONTROL |= 1}, seguito da \texttt{isb}, che scarta le istruzioni già prefetchate sotto le vecchie regole.
+    \item \texttt{app\_main()}, che non ritorna mai.
 \end{enumerate}
-Missing either of the first two gates produces the same symptom: nothing happens.
-
-\subsubsection*{The Golden Rule: Acknowledge at the Device}
-NVIC lines are \textbf{level-sensitive}: a device keeps its line active as long as its internal interrupt flag is set (e.g., bit 0 of UART \texttt{INTSTATUS}). This introduces the Golden Rule: \textbf{software must acknowledge and clear the interrupt at the device level before returning}. 
-
-If the handler executes \texttt{bx lr} without clearing the hardware flag, the NVIC instantly fires the interrupt again, permanently trapping the OS in an infinite loop. 
-
-Acknowledging usually means reading \texttt{DATA} or writing a 1 to a clear bit. \texttt{INTSTATUS} uses write-1-to-clear logic: \texttt{CMSDK\_UART0->INTSTATUS = UART\_INT\_TX;} clears bit 0 and leaves the rest alone. (SysTick, being a core exception, requires no explicit hardware acknowledgment).
-
-\subsubsection*{Shared Interrupt Lines (Q\&A)}
-While hardware designers typically map one device to one line, complex boards might wire multiple devices to the same IRQ. Because the CPU only sees a single asserted wire, the software handler must manually poll the status registers of \textit{every} device sharing that line to find the trigger, service it, and clear the flag.
-
-\section{Expanding the Vector Table for External Devices}
-The base's \texttt{boot/startup.s} allocates 16 core slots plus 32 hardware IRQs, totaling 48 words (192 bytes, or \texttt{0xC0}). 
-
-Devices are assigned specific names (e.g., \texttt{UART0TX\_Handler} is IRQ 1 at word 17; \texttt{TIMER0\_Handler} is IRQ 8 at word 24). Unused slots point to a \texttt{Default\_Handler}. Each handler name uses \texttt{.weak} and \texttt{.thumb\_set} directives: this allows a C function defined with the identical name to automatically override the weak default handler.
-
-You can verify this in GDB: examining \texttt{x/4wx 0x40} (slots 16--19) reveals identical words pointing to \texttt{Default\_Handler} (plus 1 for the Thumb state).
-
-\section{Concurrency and Shared Data}
-
-\subsection{Data Shared by a Handler and \texttt{main}}
-An interrupt handler and \texttt{main} frequently share data: the handler produces it and \texttt{main} consumes it, or vice versa. While the \texttt{volatile} keyword forces the compiler to physically read and write memory on every access, it does \textbf{not} make an update operation (like \texttt{count++}) indivisible.
-
-At the assembly level, an increment involves three distinct steps:
-\begin{lstlisting}
-ldr  r1, [r0]       /* r1 = count            (say 5) */
-adds r1, r1, #1     /* r1 = 6   <- the handler runs here, count = 6 */
-str  r1, [r0]       /* count = 6: the handler's update is lost */
-\end{lstlisting}
-
-An interrupt can arrive between any two instructions. If the handler modifies \texttt{count} between \texttt{main}'s load and \texttt{main}'s store, \texttt{main} subsequently overwrites it with a stale value. This scenario is a \textbf{lost update}, a classic example of a \textbf{race condition} where the outcome depends entirely on exact timing. 
-
-What is safe without help: a single, aligned 32-bit read or write of a value (e.g., reading \texttt{uptime\_ms}). What is \textit{not} safe: any read-modify-write operation (\texttt{++}, \texttt{+=}, \texttt{|=}), and updates involving several related variables that must remain consistent.
-
-\subsection{Critical Sections with \texttt{irq\_save} and \texttt{irq\_restore}}
-A \textbf{critical section} is a short segment of code that no handler is permitted to interrupt. On a single-core CPU, temporarily masking interrupts is sufficient:
-\begin{lstlisting}[language=c]
-uint32_t s = irq_save();    /* PRIMASK = 1: no handler can run from here ... */
-count++;                    /* ... so load, add and store happen together */
-irq_restore( s );           /* ... to here; back to the previous mask */
-\end{lstlisting}
-
-Three critical rules accompany this pattern:
-\begin{enumerate}
-    \item \textbf{Asymmetry:} Only the side that can be interrupted requires it. \texttt{main} can be interrupted by the handler, but not vice versa, so the protection belongs in \texttt{main}.
-    \item \textbf{Brevity:} Keep the critical section extremely short and never wait inside it. Any interrupt arriving in the meantime is safely delayed (kept pending by the hardware) until \texttt{irq\_restore}.
-    \item \textbf{Proper Nesting:} Always use \texttt{irq\_restore(s)} rather than a raw \texttt{cpsie i} instruction. This ensures proper nesting if the caller had already masked interrupts prior to entering the block.
-\end{enumerate}
-
-\subsection{A Ring Buffer}
-To send a long message via interrupts, \texttt{main} must leave the bytes in memory for the handler to fetch asynchronously. The classic structure for this is a \textbf{ring buffer}: an array utilized as a circular queue.
-
-The producer stores data at the \texttt{head} index, the consumer extracts data at the \texttt{tail} index, and both indices wrap around to 0 upon reaching the end of the array.
-\begin{lstlisting}[language=c]
-next = ( i + 1 ) & ( SIZE - 1 );               /* = (i + 1) % SIZE when SIZE is a power of two */
-empty:  head == tail
-full:   ( ( head + 1 ) & ( SIZE - 1 ) ) == tail /* one slot always stays unused */
-\end{lstlisting}
-
-Restricting \texttt{SIZE} to a power of two (e.g., 64) optimizes the modulo operation (\texttt{\%}) into a cheap bitwise AND (\texttt{\&}) requiring no division. Furthermore, this lock-free design ensures each index has exactly one writer: \texttt{head} is written exclusively by the producer, and \texttt{tail} exclusively by the consumer.
-
-With \texttt{SIZE = 64}, the maximum number of bytes that can wait is \textbf{63}. If all 64 slots were used, a full buffer would result in \texttt{head == tail}, making "full" structurally indistinguishable from "empty". By deliberately leaving one slot permanently unused, the two states remain mathematically distinct.
-
-\subsection{Interrupt-Driven Transmission}
-With the ring buffer in place, we expand our UART driver capabilities to handle multiple characters efficiently via interrupts, rather than sending single characters through a polling loop.
-
-The design has two sides: a producer and a consumer.
-
-\subsubsection{The Producer: \texttt{uart\_write}}
-The producer function, \texttt{uart\_write(buf, len)}, is called by the main application. It receives a buffer containing a string of characters. 
-
-Inside a critical section (protected by \texttt{irq\_save} and \texttt{irq\_restore}), it checks the available space in the internal ring buffer, copies as many bytes as possible, and returns the number of bytes successfully accepted. If the buffer fills up, it stops copying and simply returns the count; the caller is responsible for retrying with the rest.
-
-Crucially, it implements the \textbf{Priming Rule}: if the transmitter is currently idle (meaning \texttt{tx\_busy} is 0), the producer must send the first byte manually to kickstart the hardware, because no interrupt is coming to do it. The rule dictates that we must \textit{first} enable the TX interrupt (\texttt{TXIRQEN}) and \textit{then} write the first byte to the \texttt{DATA} register. Turning the interrupt on \textit{while} the transmitter is idle raises nothing, and turning it on \textit{after} the write misses the hardware event, leaving the transmission permanently stalled. 
-
-\begin{lstlisting}[language=c]
-unsigned uart_write( const char *buf, unsigned len )
-{
-    unsigned accepted = 0;
-    uint32_t saved = irq_save(); /* the handler must not run during our updates */
-
-    while ( accepted < len && !tx_full() )
-    {
-        tx_buf[tx_head] = buf[accepted];
-        tx_head = ( tx_head + 1 ) & ( TX_BUF_SIZE - 1 );
-        accepted++;
-    }
-
-    if ( !tx_busy && !tx_empty() ) /* idle: no IRQ will come, so prime it */
-    {
-        CMSDK_UART0->CTRL |= UART_CTRL_TXIRQEN; /* FIRST enable TX interrupt */
-        while ( CMSDK_UART0->STATE & UART_STATE_TXBF ) {} /* wait if polled byte is leaving */
-        
-        CMSDK_UART0->DATA = (uint32_t)(unsigned char) tx_pop(); /* THEN write */
-        tx_busy = 1;
-    }
-
-    irq_restore( saved );
-    return accepted;
-}
-\end{lstlisting}
-
-\subsubsection{The Consumer: \texttt{UART0TX\_Handler}}
-The consumer is the \texttt{UART0TX\_Handler}. It runs automatically every time a byte successfully leaves the hardware. 
-
-Because it is an interrupt handler, it needs no critical section (while it runs, \texttt{main} cannot run). It first acknowledges the interrupt at the device by writing to the \texttt{INTSTATUS} register (using a Write-1-to-Clear operation). It then checks if the buffer is empty. If it has data, it sends the next byte from the tail of the buffer. If the buffer is empty, it turns the \texttt{TXIRQEN} interrupt off and marks the transmitter as idle (\texttt{tx\_busy = 0}).
-
-\begin{lstlisting}[language=c]
-void UART0TX_Handler( void )
-{
-    CMSDK_UART0->INTSTATUS = UART_INT_TX; /* acknowledge at the device (W1C) */
-
-    if ( !tx_empty() ) {
-        CMSDK_UART0->DATA = (uint32_t)(unsigned char) tx_pop(); /* send next byte */
-    } else {
-        CMSDK_UART0->CTRL &= ~UART_CTRL_TXIRQEN;  /* nothing left: interrupt off */
-        tx_busy = 0;                              /* transmitter idle */
-    }
-}
-\end{lstlisting}
-
-\subsubsection{Initialization and Priority}
-During \texttt{uart\_init}, we establish the buffer variables and configure the NVIC priority. We assign the UART TX IRQ a priority of \texttt{0xC0}. Since SVCall operates at \texttt{0x80} and SysTick at \texttt{0xE0}, this ensures device interrupts are less urgent than system calls but more urgent than the periodic timer.
-
-\begin{lstlisting}[language=c]
-    /* Start with an empty buffer and an idle transmitter. */
-    tx_head = 0; tx_tail = 0; tx_busy = 0;
-
-    /* Priority 0xC0: less urgent than SVCall (0x80), more than SysTick (0xE0). */
-    NVIC->IPR[UART0TX_IRQn] = 0xC0;
-    /* Enable IRQ 1 in the NVIC (write-1-to-enable). */
-    NVIC->ISER[UART0TX_IRQn / 32] = 1UL << ( UART0TX_IRQn % 32 );
-\end{lstlisting}
-The device switch (\texttt{TXIRQEN}) stays deliberately off during initialization; \texttt{uart\_write} will turn it on only when there is actually data to send.
-
-\subsubsection{Testing the Ring Buffer: Sending 160 Bytes}
-To verify the interrupt-driven transmission, we can send a message significantly longer than the 64-byte buffer.
-
-In \texttt{src/main.c}, we define a 160-byte test string:
-\begin{lstlisting}[language=c]
-/* 4 lines x 40 bytes = 160 bytes: more than the 64-byte buffer */
-static const char msg[] =
-    "line 1: the quick brown fox jumps over.\n"
-    "line 2: the quick brown fox jumps over.\n"
-    "line 3: the quick brown fox jumps over.\n"
-    "line 4: the quick brown fox jumps over.\n";
-\end{lstlisting}
-
-We then implement a loop to push this data to the kernel:
-\begin{lstlisting}[language=c]
-const char *p = msg;
-unsigned left = sizeof msg - 1;         /* 160: without the final '\0' */
-while ( left > 0 )
-{
-    unsigned n = uart_write( p, left ); /* copy what fits */
-    p += n;
-    left -= n;
-    if ( n == 0 )
-    {
-        __asm volatile ( "wfi" );       /* buffer full: sleep until an IRQ */
-    }
-}
-\end{lstlisting}
-
-\paragraph{Execution Analysis}
-When executed, \texttt{uart\_write} is called exactly 3 times, returning \textbf{63, 63, and 34} (which perfectly sums to 160). Each call fills the 63 usable slots of the ring buffer. Because QEMU's UART emulator sends bytes instantly, the handler empties the buffer the moment \texttt{irq\_restore} unmasks interrupts, meaning \texttt{n == 0} never actually evaluates to true in this specific emulation. On real physical hardware at 115,200 baud, the loop would frequently sleep via \texttt{wfi}. 
-
-The consumer, \texttt{UART0TX\_Handler}, runs exactly \textbf{160 times} (once per byte sent, regardless of whether it was primed or completely interrupt-driven). On the final run, finding the buffer empty, it automatically disables \texttt{TXIRQEN}.
-
-\paragraph{Verification via GDB}
-You can explicitly verify this internal behavior using GDB:
+ 
+\texttt{app\_main} (\texttt{src/app.c}) include solo \texttt{lib/syscalls.h} e \texttt{lib/printf.h}. Ogni 1000~ms stampa l'uptime, confrontando \texttt{now - last >= 1000} e facendo \texttt{last += 1000}, perché contare le iterazioni accumulerebbe deriva per il tempo speso in \texttt{printf}. A ogni giro controlla \texttt{sys\_read()} (\texttt{-1} = nessun tasto), fa l'eco dei tasti e chiama \texttt{sleep\_ms(10)}. Anche se l'app è non privilegiata, interrupt e SVCall girano privilegiati: l'hardware alza il privilegio all'ingresso dell'eccezione e lo riabbassa al ritorno.
+ 
+\subsection*{Due esperimenti}
+\paragraph*{1. \texttt{printf} dentro il kernel.} Si aggiunge \texttt{\#include "lib/printf.h"} e un \texttt{printf("uptime called\textbackslash n")} in \texttt{sys\_uptime\_impl}. Invece di una stampa ogni 10~ms si ottiene \texttt{HardFault: HFSR=0x40000000}. La catena \texttt{printf} $\rightarrow$ \texttt{write\_all} $\rightarrow$ \texttt{sys\_write} $\rightarrow$ \texttt{svc \#1} avviene dentro SVCall (\texttt{0x80}), e SVCall non è più urgente di sé stessa. Un interrupt potrebbe restare pendente, ma una \texttt{svc} no: va presa subito o mai, quindi la CPU la \textbf{escala} a HardFault. \texttt{HFSR} bit~30 (\texttt{FORCED}) significa ``un fault è stato escalato''. Il report si stampa comunque, perché \texttt{HardFault\_Handler} usa \texttt{kprintf}, che non ha bisogno di \texttt{svc}. Si annullano le modifiche.
+ 
+\paragraph*{2. Kernel che aspetta.} Si fa in modo che \texttt{sys\_write\_impl} cicli finché tutto è accettato e si aggiunge in \texttt{app\_main} una \texttt{sys\_write} da 130 byte (più dei 64 del buffer). L'output è un solo \texttt{0} e poi il silenzio.
 \begin{itemize}
-    \item \textbf{Return values:} Set \texttt{break uart\_write}, execute \texttt{continue}, and use \texttt{finish} three times to inspect the return values (\texttt{\$1 = 63}, \texttt{\$2 = 63}, and \texttt{\$3 = 34}).
-    \item \textbf{Handler hits:} Set \texttt{break UART0TX\_Handler} and use \texttt{ignore 1 100000} to let it run in the background without stopping. After setting a temporary breakpoint (\texttt{tbreak}) on a subsequent line in \texttt{main} and continuing, \texttt{info breakpoints} will explicitly confirm the handler was hit exactly 160 times.
-    \item \textbf{NVIC state:} Examining \texttt{x/2wx 0xE000E100} shows \texttt{0x00000002} (confirming IRQ 1 is enabled in \texttt{ISER}), and \texttt{x/4bx 0xE000E400} confirms \texttt{IPR} byte 1 holds \texttt{0xC0}.
+    \item In GDB, \texttt{p \$xpsr \& 0x1ff} dà \texttt{11}, quindi la CPU è nell'handler SVCall.
+    \item \texttt{bt} mostra \texttt{uart\_write} $\leftarrow$ \texttt{sys\_write\_impl} $\leftarrow$ \texttt{svc\_dispatch} $\leftarrow$ \texttt{<signal handler called>} $\leftarrow$ \texttt{sys\_write} $\leftarrow$ \texttt{app\_main}, con in cima eventualmente \texttt{irq\_save} o \texttt{irq\_restore}.
+    \item Cosa è successo: la prima \texttt{uart\_write} riempie il buffer e ``innesca'' la UART col primo byte (lo \texttt{0} visibile). Il buffer resta pieno, ma solo \texttt{UART0TX\_Handler} (\texttt{0xC0}) può svuotarlo, e la CPU è in SVCall (\texttt{0x80}, più urgente). L'interrupt resta pendente per sempre e SysTick si ferma.
+    \item La soluzione è il design già adottato: il kernel non aspetta, ed è \texttt{write\_all} ad attendere con \texttt{wfi} in Thread mode. Si annullano le modifiche.
 \end{itemize}
+ 
+\subsection*{Privilegio e livelli in GDB}
+Con \texttt{break main} e \texttt{break app\_main}, \texttt{p/x \$control} dà \texttt{0x0} in \texttt{main} (privilegiato) e \texttt{0x1} in \texttt{app\_main} (\texttt{nPRIV} attivo). Dentro \texttt{sys\_write\_impl}, \texttt{\$control} è ancora \texttt{0x1}: la CPU è privilegiata perché sta in \textbf{Handler mode}, non perché \texttt{CONTROL} sia cambiato. I 9 bit bassi di \texttt{xPSR} sono il numero dell'eccezione, e \texttt{0xb} (11) è SVCall.
+ 
+Il backtrace mostra tutti i livelli: \texttt{sys\_write\_impl}, \texttt{svc\_dispatch}, \texttt{<signal handler called>}, \texttt{sys\_write}, \texttt{write\_all} (con \texttt{len=34}), \texttt{printf}, \texttt{app\_main}, \texttt{main}. Il frame \texttt{<signal handler called>} è il marcatore GDB dell'ingresso in un'eccezione: sopra gira il kernel privilegiato in Handler mode, sotto l'applicazione non privilegiata.
 
-\subsection*{End of Unit 2}
-At this stage, \texttt{drivers/uart.c}, \texttt{drivers/systick.c}, \texttt{kernel/irq.s}, and \texttt{boot/startup.s} are functionally complete. 
+% ======================= INIZIO TABELLA =======================
+{\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.2}
+\noindent\textbf{Come leggere la tabella.} Seconda colonna: l'idea in parole semplici. Terza colonna: \esem un caso concreto, \attn l'errore tipico, \regl la regola da ricordare.\par\medskip
+\begin{longtable}{P{0.15}P{0.36}P{0.40}}
+    \caption{Riepilogo dei concetti dell'Unità 3}\\
+    \toprule
+    \textbf{Concetto} & \textbf{In parole semplici} & \textbf{Esempio, errore tipico, regola}\\
+    \endfirsthead
+    \toprule
+    \textbf{Concetto} & \textbf{In parole semplici} & \textbf{Esempio, errore tipico, regola}\\
+    \endhead
+    \bottomrule
+    \endfoot
 
-The \texttt{src/main.c} file currently initializes the UART, prints the kernel banner, starts the SysTick timer, sends the 160-byte test message through the interrupt-driven ring buffer, and then runs the temporary privileged loop that prints the uptime every second. 
+    \grp{1. Privilegio e confine del kernel}
+        Privilegio e \texttt{svc}
+        & Il codice utente gira \textbf{non privilegiato} (\texttt{CONTROL.nPRIV = 1}), il kernel gira privilegiato. \texttt{svc} è l'unica porta controllata: l'app bussa, il kernel decide.
+        & \regl il passaggio a non privilegiato è a senso unico: cambiare \texttt{CONTROL} è a sua volta un'operazione privilegiata.\nl
+        \attn il codice non privilegiato che tocca SysTick, NVIC o SCB causa un \textbf{BusFault}.\nl
+        \esem ogni handler gira in Handler mode (privilegiato); al ritorno la CPU riparte dopo la \texttt{svc}, di nuovo non privilegiata.\rr
+        L'app chiede, il kernel fa
+        & L'app non chiama mai un driver e non tocca mai un registro: ogni I/O attraversa il confine con una system call, come \texttt{printf} $\rightarrow$ \texttt{write} in Linux.
+        & \esem \texttt{app\_main} $\rightarrow$ \texttt{printf} $\rightarrow$ \texttt{write\_all} $\rightarrow$ \texttt{sys\_write} $\rightarrow$ \texttt{svc \#1} $\rightarrow$ \textbf{confine} $\rightarrow$ \texttt{SVC\_Handler} $\rightarrow$ \texttt{svc\_dispatch} $\rightarrow$ \texttt{uart\_write} $\rightarrow$ UART0 (\texttt{0x40004000}).\nl
+        \regl sopra il confine: Thread mode non privilegiato. Sotto: Handler mode privilegiato.\rr
+        Protezione logica e fisica
+        & Senza MPU l'hardware blocca solo lo System Control Space (protezione \emph{fisica}). I registri UART restano raggiungibili: tenerli lontani è una regola \emph{logica} del design.
+        & \attn \texttt{irq\_save()} usa \texttt{cpsid i}, che in modalità non privilegiata viene ignorata in silenzio: il driver crederebbe di essere protetto.\nl
+        \regl il driver UART deve girare solo nel kernel privilegiato.\\
 
-Currently, everything still runs privileged, directly inside \texttt{main}. The final architectural phase (Unit 3) will move this application workload to an unprivileged environment and establish a real, secure kernel boundary between the user application and the hardware.
+    \grp{2. ABI, servizi e stub}
+        ABI\sig{Application Binary Interface}
+        & Il contratto a basso livello tra compilatore e hardware. Un'API parla di nomi C, l'ABI di registri e istruzioni, perché dopo la compilazione i nomi spariscono.
+        & \regl numero del servizio dentro \texttt{svc \#n}; argomenti in \texttt{r0}, \texttt{r1}, \texttt{r2} (AAPCS); risultato in \texttt{r0}.\nl
+        \esem una syscall sembra una funzione C, ma scatta una \texttt{svc} invece di una \texttt{bl}.\rr
+        Servizi
+        & Le costanti \texttt{SYS\_WRITE}, \texttt{SYS\_READ}, \texttt{SYS\_UPTIME} stanno in \texttt{lib/syscalls.h}, condiviso da utente e kernel.
+        & \esem 1 \texttt{sys\_write(buf, len)}: byte accettati (da 0 a \texttt{len}). 2 \texttt{sys\_read()}: un byte o \texttt{-1}. 3 \texttt{sys\_uptime()}: ms dal boot. Numero 0 o $\ge 4$: \texttt{-1}.\nl
+        \regl nessun servizio aspetta: \texttt{sys\_write} prende ciò che entra nel ring buffer e torna subito.\rr
+        Stub
+        & Funzione assembly di due istruzioni (\texttt{svc \#n} e \texttt{bx lr}) in \texttt{lib/syscalls.s}. Sospende l'app e chiama il kernel, senza altra logica.
+        & \regl il numero dopo \texttt{svc} è un \textbf{letterale} (1, 2, 3), perché è codificato nell'opcode.\nl
+        \attn l'assembly non legge le macro C: i numeri vanno tenuti allineati a mano con \texttt{lib/syscalls.h}.\rr
+        Exception Frame e viaggio di una syscall
+        & L'hardware salva 8 registri sullo stack. Il kernel li vede come array \texttt{uint32\_t *frame}: \texttt{frame[0]} è il vecchio \texttt{r0}, \texttt{frame[1]} il vecchio \texttt{r1}.
+        & \esem (1) C mette gli argomenti in \texttt{r0}, \texttt{r1}; (2) \texttt{svc \#1} e stacking; (3) il kernel legge il frame e scrive il risultato in \texttt{frame[0]}; (4) l'hardware ripristina i registri, quindi \texttt{r0} = risposta; (5) \texttt{bx lr}.\nl
+        \regl il risultato va in \texttt{frame[0]}, perché al ritorno l'hardware ripopola \texttt{r0} da lì.\\
 
-\section{Unit 3: System Calls and the Kernel Boundary}
+    \grp{3. Entrata nel kernel}
+        \texttt{SVC\_Handler} in assembly
+        & Deve trovare l'indirizzo del frame, cioè lo stack pointer all'ingresso, e passarlo al C. Due istruzioni: \texttt{mrs r0, msp} e \texttt{b svc\_dispatch}.
+        & \attn in C il compilatore aggiunge un prologo (es.\ \texttt{push \{r7, lr\}}) che sposta \texttt{sp} e cambia con \texttt{-O0} / \texttt{-O2}: si perde il frame.\nl
+        \regl \texttt{b} e non \texttt{bl}: \texttt{bl} sovrascrive \texttt{lr} e distrugge \texttt{EXC\_RETURN} (\texttt{0xFFFFFFF9}).\rr
+        Estrarre numero e argomenti
+        & Il numero sta dentro l'istruzione \texttt{svc}, quindi il kernel lo rilegge dal codice. In Thumb è a 16 bit: byte alto \texttt{0xDF} (opcode), byte basso \texttt{n}.
+        & \esem \texttt{svc \#1} = \texttt{0xDF01}, in memoria (little-endian) \texttt{01 DF}.\nl
+        \regl frame = \texttt{r0--r3, r12, lr, pc, xPSR}. Il \texttt{PC} salvato (\texttt{frame[6]}) punta dopo la \texttt{svc}: \texttt{0xDF} sta a \texttt{PC - 1}, \texttt{n} a \texttt{PC - 2}. Argomenti da \texttt{frame[0..2]}.\rr
+        Dispatcher
+        & Tabella di puntatori a funzione: l'indice è il numero del servizio, l'indice 0 resta vuoto (\texttt{NULL}). \texttt{svc\_dispatch} legge \texttt{n} da \texttt{PC - 2}.
+        & \regl se \texttt{n >= TABLE\_SIZE} o \texttt{table[n] == 0}: \texttt{frame[0] = -1}. Altrimenti \texttt{frame[0] = table[n](frame[0], frame[1], frame[2])}.\nl
+        \esem numero 0 o 99 $\rightarrow$ \texttt{-1}.\\
 
-\subsection{Recap: Privilege and \texttt{svc}}
-From Week 2, we established four architectural facts:
-\begin{enumerate}
-    \item \texttt{main} starts \textbf{privileged}. Setting \texttt{CONTROL.nPRIV = 1} drops the CPU into \textbf{unprivileged} Thread mode. This transition is one-way; unprivileged code cannot clear the bit again.
-    \item Unprivileged code attempting to touch the System Control Space (SysTick, NVIC, SCB) triggers a \textbf{BusFault}.
-    \item The \texttt{svc \#n} instruction is always permitted and raises the \textbf{SVCall} exception.
-    \item Every exception handler runs in Handler mode, which is \textbf{privileged}. When the handler returns, the CPU resumes execution right after the \texttt{svc} instruction, dropping back to unprivileged mode.
-\end{enumerate}
+    \grp{4. Dove funziona svc e perché il kernel non aspetta}
+        Priorità e HardFault
+        & SVCall ha priorità \texttt{0x80}. Un'eccezione interrompe solo codice meno urgente (valore più alto = meno urgente), e una \texttt{svc} non si può rimandare.
+        & \esem accettata da Thread mode e da \texttt{SysTick\_Handler} (\texttt{0xE0}) o \texttt{UART0TX\_Handler} (\texttt{0xC0}), dove si annida.\nl
+        \attn HardFault se eseguita dentro \texttt{SVC\_Handler} e funzioni che chiama (\texttt{0x80}), in un fault handler (\texttt{0x00}) o con \texttt{PRIMASK = 1}.\nl
+        \regl per questo il kernel tiene il suo \texttt{kprintf} a polling.\rr
+        Il kernel non aspetta mai
+        & Dentro un handler non si attende. Se \texttt{sys\_write\_impl} ciclasse in SVCall (\texttt{0x80}) in attesa del buffer, l'interrupt TX (\texttt{0xC0}, meno urgente) non partirebbe mai: deadlock. Anche SysTick (\texttt{0xE0}) si bloccherebbe e il clock si fermerebbe.
+        & \regl il kernel accetta quanto entra e torna subito. L'attesa (\texttt{wfi}) si fa in Thread mode, dove ogni interrupt può girare.\\
 
-In Week 2, \texttt{SVC\_Handler} performed one fixed job (printing a single message). In this unit, it becomes a \textbf{system-call interface} capable of multiplexing several services, receiving arguments, and returning results to user space.
+    \grp{5. Libreria utente}
+        \texttt{printf} vs \texttt{kprintf}
+        & \texttt{printf} utente: \texttt{vformat} formatta in un buffer locale da 64 byte sullo stack, poi \texttt{sys\_write} lo invia. \texttt{kprintf} kernel: usa direttamente il driver in polling.
+        & \esem \texttt{printf}: non privilegiato, passa da \texttt{svc} e ring buffer, attende con \texttt{wfi}. \texttt{kprintf}: privilegiato, busy-wait.\nl
+        \attn \texttt{printf} dentro un handler $\rightarrow$ HardFault.\nl
+        \regl \texttt{kprintf} funziona anche in HardFault, perché non usa \texttt{svc}.\rr
+        \texttt{write\_all}
+        & Cicla finché tutti i byte sono inviati, gestendo le scritture parziali di \texttt{sys\_write}.
+        & \regl se \texttt{sys\_write} ritorna 0, il buffer è pieno: \texttt{wfi} invece di busy-wait. La CPU dorme finché un interrupt (UART TX che libera spazio) la risveglia.\rr
+        \texttt{sleep\_ms}
+        & Salva \texttt{start = sys\_uptime()} e fa \texttt{wfi} finché \texttt{sys\_uptime() - start < ms}.
+        & \regl sottrazione unsigned: regge il wraparound ($\sim$49,7 giorni).\nl
+        \esem SysTick scatta ogni 10~ms, quindi ogni \texttt{wfi} si risveglia almeno così spesso e il kernel non viene mai bloccato.\\
 
-\subsection{The Rule From Now On: The App Asks, The Kernel Does}
-In our architecture, the application never calls a device driver directly and never touches a hardware register. \textbf{Every I/O operation crosses the kernel boundary via a system call}, just as in Linux a user-space \texttt{printf} ultimately invokes the \texttt{write} system call.
+    \grp{6. Avvio e applicazione}
+        Boot di \texttt{main}
+        & \texttt{main} è l'inizializzatore del kernel: gira privilegiato una volta sola, poi lascia il posto all'app.
+        & \esem 1) \texttt{uart\_init()}; 2) \texttt{kprintf} del banner; 3) \texttt{systick\_init()} (tick 10~ms); 4) privilege drop: \texttt{CONTROL |= 1} + \texttt{isb}; 5) \texttt{app\_main()}, che non ritorna.\nl
+        \regl l'\texttt{isb} scarta le istruzioni già prefetchate sotto le vecchie regole.\rr
+        \texttt{app\_main}
+        & App non privilegiata: usa solo \texttt{lib/syscalls.h} e \texttt{lib/printf.h}. Ogni 1000~ms stampa l'uptime, poi controlla \texttt{sys\_read()} (\texttt{-1} = nessun tasto), fa l'eco e chiama \texttt{sleep\_ms(10)}.
+        & \attn contare le iterazioni accumulerebbe deriva (il tempo speso in \texttt{printf}).\nl
+        \regl confrontare \texttt{now - last >= 1000} e fare \texttt{last += 1000}.\nl
+        \esem interrupt e SVCall girano privilegiati anche se l'app non lo è: l'hardware alza il privilegio all'ingresso e lo riabbassa al ritorno.\\
 
-The end-to-end structure is:
-\begin{verbatim}
- app_main()          printf("uptime: %u ms\n", now)        src/app.c          \
-     |                                                                         | unprivileged
- user library        printf -> write_all -> sys_write()    lib/printf.c       | (Thread mode)
-     |                                                                         |
- user stub           svc #1 ; bx lr                        lib/syscalls.s     /
-=====+============== SVCall exception: the kernel boundary =======================
- entry               SVC_Handler: mrs r0, msp ; b ...      kernel/svc_entry.s  \
-     |                                                                          | privileged
- dispatcher          svc_dispatch(frame): table[n](...)    kernel/syscall.c    | (Handler mode)
-     |                                                                          |
- driver              uart_write() + UART0TX_Handler        drivers/uart.c      /
-     |
- hardware            UART0 registers at 0x40004000
-\end{verbatim}
-
-\subsubsection{Logical vs. Physical Protection}
-Because our Cortex-M3 setup does not yet use a Memory Protection Unit (MPU), the hardware blocks unprivileged access only to the System Control Space; the UART registers at \texttt{0x40004000} remain reachable from unprivileged code. 
-
-However, the kernel boundary is a hard technical requirement: the UART driver uses \texttt{irq\_save()} (which executes \texttt{cpsid i}) to protect its ring buffer. Because \texttt{cpsid} is silently ignored in unprivileged mode, the driver is unsafe unless executed in privileged kernel mode.
-
-\subsection{The System-Call ABI and Services}
-An Application Binary Interface (ABI) is an agreement at the level of registers and machine instructions rather than C source code:
-\begin{itemize}
-    \item \textbf{Service Number:} Embedded inside the \texttt{svc \#n} instruction.
-    \item \textbf{Arguments:} Passed in registers \texttt{r0}, \texttt{r1}, and \texttt{r2}, following the AAPCS.
-    \item \textbf{Result:} Returned to the application in \texttt{r0}, as expected by a C caller.
-\end{itemize}
-
-To avoid magic numbers in C code, symbolic constants (\texttt{SYS\_WRITE}, \texttt{SYS\_READ}, \texttt{SYS\_UPTIME}) and prototypes are defined in a shared header (\texttt{lib/syscalls.h}) included by both user space and the kernel:
-
-\begin{table}[h!]
-    \centering
-    \small
-    \begin{tabular}{lllp{6.5cm}}
-        \toprule
-        \textbf{Number} & \textbf{Service} & \textbf{Arguments} & \textbf{Result} \\
-        \midrule
-        1 & \texttt{sys\_write} & \texttt{buf}, \texttt{len} & Bytes \textbf{accepted} (0 to \texttt{len}). Routes to \texttt{uart\_write}. \\
-        2 & \texttt{sys\_read} & None & One received byte, or \texttt{-1} if none. Routes to \texttt{uart\_getc\_polled}. \\
-        3 & \texttt{sys\_uptime} & None & Milliseconds since boot. Routes to \texttt{systick\_uptime\_ms}. \\
-        0, $\ge 4$ & Invalid & None & Unknown service (e.g., 0 or 99): returns \texttt{-1}. \\
-        \bottomrule
-    \end{tabular}
-\end{table}
-
-\textbf{No service waits:} \texttt{sys\_write} takes only what currently fits in the TX ring buffer and returns the count immediately. The unprivileged caller is responsible for waiting.
-
-\subsection{User Space Implementation: The Stubs}
-Each system call is exposed to C via a two-instruction assembly \textbf{stub} in \texttt{lib/syscalls.s}. By the AAPCS, the C caller has already placed arguments into \texttt{r0} and \texttt{r1}. The \texttt{svc} instruction traps into the kernel, where hardware stacks them as \texttt{frame[0]} and \texttt{frame[1]}. Upon exception return, \texttt{r0} holds the result written by the kernel into \texttt{frame[0]}, and \texttt{bx lr} returns it unchanged.
-
-Because the number after \texttt{svc} is encoded directly into the instruction opcode, it must be a literal (\texttt{1}, \texttt{2}, or \texttt{3}). The assembly file does not read the C macros from \texttt{lib/syscalls.h}, so these numbers must be kept in sync manually.
-
-\begin{lstlisting}
-    .syntax unified
-    .cpu cortex-m3
-    .thumb
-    .section .text,"ax",%progbits
-
-/* int sys_write(const char *buf, unsigned len): buf in r0, len in r1 */
-    .global sys_write
-    .type sys_write, %function
-    .thumb_func
-sys_write:
-    svc #1                      /* svc(SYS_WRITE, buf, len) */
-    bx lr                       /* return r0 (set by the kernel in frame[0]) */
-    .size sys_write, . - sys_write
-
-/* int sys_read(void) */
-    .global sys_read
-    .type sys_read, %function
-    .thumb_func
-sys_read:
-    svc #2                      /* svc(SYS_READ) */
-    bx lr                       /* return r0 */
-    .size sys_read, . - sys_read
-
-/* uint32_t sys_uptime(void) */
-    .global sys_uptime
-    .type sys_uptime, %function
-    .thumb_func
-sys_uptime:
-    svc #3                      /* svc(SYS_UPTIME) */
-    bx lr                       /* return r0 */
-    .size sys_uptime, . - sys_uptime
-\end{lstlisting}
-
-\subsection{The Kernel Entry Point: Why It Must Be Assembly}
-When \texttt{svc} executes, it traps into \texttt{SVC\_Handler}, which passes a pointer to the 8-word hardware exception frame (\texttt{uint32\_t *frame}) to the C dispatcher (\texttt{svc\_dispatch}).
-
-\texttt{SVC\_Handler} must be written in assembly (\texttt{kernel/svc\_entry.s}). If written in C, the compiler may insert prologue instructions (such as \texttt{push \{r7, lr\}}) before the first C line runs, and this behavior changes depending on optimization flags like \texttt{-O0} versus \texttt{-O2}. Modifying \texttt{sp} in the prologue shifts the stack pointer and corrupts the offset to the exception frame.
-
-\begin{lstlisting}
-    .global SVC_Handler
-    .type SVC_Handler, %function
-    .thumb_func
-SVC_Handler:
-    mrs r0, msp                 /* r0 = MSP: frame = address of the 8 saved registers */
-    b svc_dispatch              /* svc_dispatch(frame); lr still = EXC_RETURN */
-\end{lstlisting}
-
-Executing \texttt{mrs r0, msp} first captures the exact Stack Pointer left by hardware and passes it as argument \texttt{r0} to \texttt{svc\_dispatch}. We use a plain branch (\texttt{b}) rather than branch-with-link (\texttt{bl}): \texttt{bl} would overwrite \texttt{lr} and destroy the \texttt{EXC\_RETURN} value (\texttt{0xFFFFFFF9}). With a tail branch (\texttt{b}), \texttt{lr} is preserved so that returning from \texttt{svc\_dispatch} triggers the exception return directly.
-
-\subsection{Extracting the Service Number and Arguments}
-In Thumb mode, \texttt{svc \#n} is a \textbf{16-bit} instruction: the high byte is the opcode \texttt{0xDF} and the low byte is the immediate \texttt{n} (so \texttt{svc \#1} is \texttt{0xDF01}). Because the Cortex-M3 is \textbf{little-endian}, the low byte \texttt{n} is stored at the lower address, followed by \texttt{0xDF}:
-
-\begin{verbatim}
- address:   0x8e0   0x8e1   0x8e2   0x8e3
- byte:      0x01    0xdf    0x70    0x47
-            +- svc #1 --+   +- bx lr ---+
-\end{verbatim}
-
-On exception entry, hardware pushes the 8-word frame (\texttt{r0--r3}, \texttt{r12}, \texttt{lr}, \texttt{pc}, \texttt{xPSR}). The stacked \texttt{PC} (\texttt{frame[6]}) points to the instruction immediately \textit{after} \texttt{svc} (\texttt{bx lr}). Thus, the opcode \texttt{0xDF} sits at \texttt{PC - 1} and the service number \texttt{n} sits at \texttt{PC - 2}. The user arguments (\texttt{r0--r2}) are read from \texttt{frame[0]}, \texttt{frame[1]}, and \texttt{frame[2]}.
-
-\subsection{The Dispatcher and Validating the Result Return}
-To route calls without a large \texttt{switch}, \texttt{kernel/syscall.c} uses a function pointer table:
-
-\begin{lstlisting}[language=C]
-typedef uint32_t ( *syscall_fn )( uint32_t a0, uint32_t a1, uint32_t a2 );
-
-static const syscall_fn table[] = {
-    [SYS_WRITE]  = sys_write_impl,
-    [SYS_READ]   = sys_read_impl,
-    [SYS_UPTIME] = sys_uptime_impl,
-};
-#define TABLE_SIZE ( sizeof( table ) / sizeof( table[0] ) )
-
-void svc_dispatch( uint32_t *frame )
-{
-    uint8_t n = ( ( uint8_t * ) frame[6] )[-2];
-
-    if ( n >= TABLE_SIZE || table[n] == 0 ) {
-        frame[0] = ( uint32_t ) -1;             /* unknown service */
-        return;
-    }
-    /* run it; the result goes into the stacked r0 = the caller's r0 */
-    frame[0] = table[n]( frame[0], frame[1], frame[2] );
+    \grp{7. Esperimenti e GDB}
+        Esperimento 1: \texttt{printf} nel kernel
+        & Si aggiunge \texttt{printf("uptime called\textbackslash n")} in \texttt{sys\_uptime\_impl}. Invece di una stampa ogni 10~ms si ottiene un HardFault.
+        & \esem output \texttt{HardFault: HFSR=0x40000000} (bit~30 \texttt{FORCED} = fault escalato).\nl
+        \attn la \texttt{svc} parte dentro SVCall (\texttt{0x80}), che non è più urgente di sé stessa: non si può rimandare, quindi la CPU la escala.\nl
+        \regl il report si stampa lo stesso perché \texttt{HardFault\_Handler} usa \texttt{kprintf}.\rr
+        Esperimento 2: kernel che aspetta
+        & \texttt{sys\_write\_impl} cicla finché tutto è accettato e \texttt{app\_main} scrive 130 byte (buffer da 64). Output: un solo \texttt{0}, poi silenzio.
+        & \esem GDB: \texttt{p \$xpsr \& 0x1ff} = 11 (SVCall); \texttt{bt}: \texttt{uart\_write} $\leftarrow$ \texttt{sys\_write\_impl} $\leftarrow$ \texttt{svc\_dispatch} $\leftarrow$ \texttt{<signal handler called>} $\leftarrow$ \texttt{sys\_write} $\leftarrow$ \texttt{app\_main}.\nl
+        \attn la prima \texttt{uart\_write} riempie il buffer e innesca la UART (lo \texttt{0}). Solo \texttt{UART0TX\_Handler} (\texttt{0xC0}) potrebbe svuotarlo, ma la CPU è in SVCall (\texttt{0x80}): TX pendente per sempre, SysTick fermo.\nl
+        \regl soluzione: il kernel non aspetta, ad attendere è \texttt{write\_all} in Thread mode.\rr
+        Privilegio e livelli in GDB
+        & Si verifica la separazione dei livelli con \texttt{\$control} e il backtrace.
+        & \esem \texttt{p/x \$control}: \texttt{0x0} in \texttt{main}, \texttt{0x1} in \texttt{app\_main}. Dentro \texttt{sys\_write\_impl} è ancora \texttt{0x1}: la CPU è privilegiata perché è in Handler mode, non perché \texttt{CONTROL} sia cambiato.\nl
+        \regl i 9 bit bassi di \texttt{xPSR} sono il numero dell'eccezione (\texttt{0xb} = 11 = SVCall).\nl
+        \regl nel backtrace \texttt{<signal handler called>} marca l'ingresso in un'eccezione: sopra gira il kernel privilegiato, sotto l'app non privilegiata.\\
+\end{longtable}
 }
-\end{lstlisting}
-
-\paragraph{Why Write to \texttt{frame[0]}?}
-The kernel cannot return the result simply by leaving it in physical register \texttt{r0}. On exception return, the hardware pops the 8-word frame from the stack back into the CPU registers, overwriting physical \texttt{r0} with \texttt{frame[0]}. Writing the return value into \texttt{frame[0]} ensures the hardware restores it into the caller's \texttt{r0}.
-
-\subsubsection{Try It: Your First System Call}
-In \texttt{src/main.c}, include \texttt{"lib/syscalls.h"} and replace \texttt{systick\_uptime\_ms()} with \texttt{sys\_uptime()}. The output is unchanged, but follows the new path:
-\texttt{sys\_uptime} $\rightarrow$ \texttt{svc \#3} $\rightarrow$ \texttt{SVC\_Handler} $\rightarrow$ \texttt{svc\_dispatch} $\rightarrow$ \texttt{sys\_uptime\_impl} $\rightarrow$ \texttt{systick\_uptime\_ms}.
-(Although \texttt{main} is still privileged here, \texttt{svc} works from privileged mode too.)
-
-\subsubsection{Finding the Service Number in GDB}
-You can inspect the hardware frame and decode $n$ in GDB:
-\begin{lstlisting}[language=bash]
-(gdb) break *SVC_Handler                # very first instruction of the entry
-(gdb) continue
-(gdb) x/8wx $sp                         # the frame: r0 r1 r2 r3 / r12 lr pc xPSR
-(gdb) p/x $lr
-(gdb) x/2bx ((unsigned *)$sp)[6] - 2    # the 2 bytes before the stacked pc
-\end{lstlisting}
-Here \texttt{frame[6]} points right after \texttt{svc} (e.g., \texttt{0x7e6}), and the two preceding bytes are \texttt{0x03} and \texttt{0xDF} (\texttt{svc \#3} in little-endian, so $n = 3$, \texttt{SYS\_UPTIME}). Moreover, \texttt{lr} holds \texttt{0xFFFFFFF9} (\texttt{EXC\_RETURN}), preserved by \texttt{b svc\_dispatch}. Running \texttt{stepi} twice enters \texttt{svc\_dispatch}, and \texttt{finish} returns directly to \texttt{bx lr} in \texttt{sys\_uptime}.
-
-\subsection{User Space Printing and Hardware Wait States}
-While the kernel uses polled \texttt{kprintf}, user applications use \texttt{printf} built on system calls. Because \texttt{sys\_write} pushes data into the ring buffer and immediately returns the count accepted, user-space \texttt{printf} loops until all bytes are sent. When the buffer is full, the application executes \texttt{wfi} (Wait For Interrupt), putting the CPU to sleep until a hardware interrupt (such as UART TX freeing buffer space) wakes it up.
-
-\subsection{The Kernel Rules: Where SVC Works}
-The \texttt{svc} instruction raises \texttt{SVCall} synchronously, but an exception can only preempt code that is \textit{less} urgent than itself:
-
-\begin{table}[h!]
-    \centering
-    \small
-    \begin{tabular}{p{5.2cm} p{2.8cm} p{4.5cm}}
-        \toprule
-        \textbf{Where \texttt{svc} runs} & \textbf{Current priority} & \textbf{Result} \\
-        \midrule
-        \texttt{app\_main}, \texttt{main} (Thread mode) & none (lowest) & taken \\
-        \texttt{SysTick\_Handler} / \texttt{UART0TX\_Handler} & \texttt{0xE0} / \texttt{0xC0} &
-        taken: SVCall is more urgent, so it nests \\
-        \texttt{SVC\_Handler} and anything it calls & \texttt{0x80} & \textbf{HardFault} \\
-        a fault handler & \texttt{0x00} or more urgent & \textbf{HardFault} \\
-        between \texttt{irq\_save} and \texttt{irq\_restore} (\texttt{PRIMASK} = 1) &
-        masked & \textbf{HardFault} \\
-        \bottomrule
-    \end{tabular}
-\end{table}
-
-Because \texttt{SVCall} has priority \texttt{0x80}, executing \texttt{svc} from a handler of equal or higher urgency (or while \texttt{PRIMASK = 1}) cannot be serviced and escalates to a \textbf{HardFault}. This is why the kernel retains its own polled \texttt{kprintf} independent of system calls.
-
-\subsection{Why the Kernel Never Waits}
-The kernel must never wait inside an exception handler. If \texttt{sys\_write\_impl} looped inside \texttt{SVCall} (priority \texttt{0x80}) waiting for the UART TX buffer to empty, the less urgent UART TX interrupt (priority \texttt{0xC0}) could never preempt it, deadlocking the system. SysTick (\texttt{0xE0}) would also be blocked, stopping the system clock. Instead, the kernel accepts only what fits in the buffer and returns immediately, leaving waiting (\texttt{wfi}) to unprivileged Thread mode.
-
-\subsection{User Space Library: Implementing \texttt{printf}}
-With the system calls operational, we shift our focus to user space and implement \texttt{printf} as a user-level library in \texttt{lib/printf.c}.
-
-Unlike the kernel's \texttt{kprintf} (which calls the polled hardware driver directly), the user-level \texttt{printf} operates under unprivileged constraints in two steps:
-\begin{enumerate}
-    \item It uses the shared \texttt{vformat} engine to format the string into a local 64-byte buffer allocated on the unprivileged task's stack.
-    \item It flushes this buffer to the hardware by invoking the \texttt{sys\_write} system call.
-\end{enumerate}
-
-\subsubsection{Handling Partial Writes and Waiting (\texttt{write\_all})}
-Because \texttt{sys\_write} pushes data into the kernel's 64-byte interrupt-driven ring buffer, it only accepts what currently fits and returns the accepted count immediately without waiting.
-
-The user library handles partial writes via \texttt{write\_all}, which loops until all bytes are sent. If \texttt{sys\_write} returns 0, the ring buffer is full: instead of busy-waiting, the application executes \texttt{wfi} (Unit~2). The CPU sleeps until an interrupt fires (such as UART TX freeing a buffer slot), then resumes the loop:
-
-\begin{lstlisting}[language=C]
-void write_all(const char *buf, unsigned len) {
-    while ( len > 0 ) {
-        int n = sys_write(buf, len); /* The kernel takes what fits */
-        buf += n;                    /* Skip the accepted bytes */
-        len -= n;
-        
-        if (n == 0) {
-            __asm volatile ("wfi");  /* Buffer full: sleep until an interrupt */
-        }
-    }
-}
-\end{lstlisting}
-
-\subsection{Implementing \texttt{sleep\_ms} in User Space}
-Using \texttt{wfi} and unsigned subtraction (Unit~2), we can implement \texttt{sleep\_ms} without imprecise delay loops by polling \texttt{sys\_uptime()} (\texttt{SYS\_UPTIME}) between sleep states:
-
-\begin{lstlisting}[language=C]
-void sleep_ms(uint32_t ms) {
-    uint32_t start = sys_uptime();
-    while (sys_uptime() - start < ms) {
-        __asm volatile ("wfi"); /* Sleep until the next interrupt */
-    }
-}
-\end{lstlisting}
-
-The condition \texttt{sys\_uptime() - start < ms} uses unsigned 32-bit arithmetic, which handles 32-bit wraparound (after $\approx 49.7$ days) without error. Because the waiting occurs in unprivileged Thread mode, the kernel is never blocked: every interrupt can preempt the sleeping task, allowing the OS to handle background UART transmission and timekeeping.
-
-\subsection{The Final System Boot Flow}
-\texttt{src/main.c} acts as the \textbf{kernel} initializer. It runs privileged once at boot and performs five steps:
-\begin{enumerate}
-    \item \texttt{uart\_init()}: Initializes the console first so subsequent code can print.
-    \item \texttt{kprintf}: Prints the boot banner via polling.
-    \item \texttt{systick\_init()}: Starts the 10~ms tick used by \texttt{sys\_uptime} and \texttt{sleep\_ms}.
-    \item \textbf{Privilege Drop}: Sets \texttt{CONTROL.nPRIV = 1} followed by an \texttt{isb} (Instruction Synchronization Barrier). The \texttt{isb} flushes any instructions already prefetched under the old privileged state, ensuring all subsequent instructions run unprivileged.
-    \item \texttt{app\_main()}: Calls the user application, which never returns.
-\end{enumerate}
-
-\begin{lstlisting}[language=C]
-#include "drivers/uart.h"
-#include "drivers/systick.h"
-#include "kernel/kprintf.h"
-#include "src/app.h"
-
-int main( void )
-{
-    uart_init();                                /* 1. console first */
-    kprintf( "scratch-os: kernel started\n" );  /* 2. polled print */
-    systick_init();                             /* 3. 10 ms tick */
-    kprintf( "dropping to unprivileged mode\n" );
-    
-    __asm volatile (            /* 4. CONTROL = CONTROL | 1; (nPRIV = 1) */
-        "mrs r0, control    \n" /* r0 = CONTROL */
-        "orr r0, r0, #1     \n" /* r0 |= 1: set nPRIV */
-        "msr control, r0    \n" /* CONTROL = r0: now unprivileged */
-        "isb                \n" /* refetch under the new rules */
-        : : : "r0", "memory" );
-        
-    app_main();                                 /* 5. never returns */
-    for ( ;; ) { }                              /* not reached */
-}
-\end{lstlisting}
-
-\subsection{The User Application: \texttt{app\_main}}
-\texttt{src/app.c} contains the unprivileged application, which includes only \texttt{lib/syscalls.h} and \texttt{lib/printf.h}. 
-
-Every 1000~ms, it prints the uptime. It compares against the system clock (\texttt{now - last >= 1000}) rather than counting loop iterations, which would drift due to the time spent inside \texttt{printf}. On each iteration, it also checks \texttt{sys\_read()} for incoming keys, echoes them if present, and sleeps via \texttt{sleep\_ms(10)}:
-
-\begin{lstlisting}[language=C]
-#include <stdint.h>
-#include "src/app.h"
-#include "lib/syscalls.h"
-#include "lib/printf.h"
-
-void app_main( void )
-{
-    printf( "app: hello from unprivileged code\n" );
-    uint32_t last = 0;          /* when the uptime was last printed */
-
-    for ( ;; )
-    {
-        uint32_t now = sys_uptime();
-        if ( now - last >= 1000 )           /* one second passed? */
-        {
-            printf( "uptime: %u ms\n", now );
-            last += 1000;
-        }
-
-        int c = sys_read();                 /* never waits: -1 = no key */
-        if ( c != -1 )
-        {
-            printf( "key: %c\n", c );
-        }
-
-        sleep_ms( 10 );
-    }
-}
-\end{lstlisting}
-
-While \texttt{app\_main} runs unprivileged, hardware interrupts (SysTick, UART TX) and system calls (SVCall) still execute privileged: the Cortex-M hardware raises privilege on exception entry and restores unprivileged mode on return.
-
-\subsection{A Debug Print Inside the Kernel}
-This experiment answers a question: why does the kernel keep its own \texttt{kprintf}, now that there is a \texttt{printf}? Suppose you want to trace every uptime request. In \texttt{kernel/syscall.c}, add \texttt{\#include "lib/printf.h"} below the other includes, and in \texttt{sys\_uptime\_impl} add one line before the \texttt{return}:
-
-\begin{lstlisting}[language=C]
-    printf("uptime called\n");        /* NEW: debug print */
-\end{lstlisting}
-
-You might expect \texttt{uptime called} about a hundred times per second. \texttt{make run} prints instead:
-
-\begin{lstlisting}[language=bash]
-scratch-os: kernel started
-dropping to unprivileged mode
-app: hello from unprivileged code
-HardFault: HFSR=0x40000000
-\end{lstlisting}
-
-Follow the call: \texttt{printf} $\rightarrow$ \texttt{write\_all} $\rightarrow$ \texttt{sys\_write} $\rightarrow$ \textbf{\texttt{svc \#1}}, executed \textbf{inside} the SVCall handler, whose priority is \texttt{0x80}. An exception can only interrupt code that is \textbf{less urgent} than itself, and SVCall is not more urgent than SVCall. Unlike an interrupt, an \texttt{svc} cannot be postponed until later: it must be taken now or never. So the CPU \textbf{escalates} it to a HardFault.
-
-\texttt{HFSR} bit~30, \textbf{FORCED} (\texttt{0x40000000}, \texttt{SCB\_HFSR\_FORCED} in \texttt{include/cmsdk.h}), means ``a fault was escalated to HardFault''. Notice that the report itself prints fine: \texttt{HardFault\_Handler} uses \texttt{kprintf}, which needs no \texttt{svc}. Undo both edits (the \texttt{\#include} and the \texttt{printf} line).
-
-\subsection{Making the Kernel Wait}
-The second experiment answers another question: why does \texttt{sys\_write} return a count instead of simply waiting until everything is sent? Make two temporary edits. In \texttt{kernel/syscall.c}, in \texttt{sys\_write\_impl}, replace \texttt{return uart\_write(buf, len);} with a loop that waits until \textbf{everything} is accepted:
-
-\begin{lstlisting}[language=C]
-    unsigned done = 0;
-    while (done < len)
-        done += uart_write(buf + done, len - done);
-    return done;
-\end{lstlisting}
-
-And in \texttt{src/app.c}, in \texttt{app\_main}, right after the hello \texttt{printf}, add a direct write of 130 bytes, more than the 64-byte ring buffer (the compiler joins the four adjacent strings into one):
-
-\begin{lstlisting}[language=C]
-    sys_write("0123456789012345678901234567890123456789"
-              "0123456789012345678901234567890123456789"
-              "0123456789012345678901234567890123456789"
-              "012345678\n", 130);
-\end{lstlisting}
-
-Do the 130 characters appear? Do the \texttt{uptime:} lines? \texttt{make run} prints:
-
-\begin{lstlisting}[language=bash]
-scratch-os: kernel started
-dropping to unprivileged mode
-app: hello from unprivileged code
-0
-\end{lstlisting}
-
-One \texttt{0}, then nothing, forever. In GDB (\texttt{make debug}, \texttt{continue}, then \texttt{Ctrl-C} to interrupt), \texttt{p \$xpsr \& 0x1ff} gives \texttt{11}: the CPU is inside the SVCall handler. \texttt{bt} shows \texttt{uart\_write} $\leftarrow$ \texttt{sys\_write\_impl} $\leftarrow$ \texttt{svc\_dispatch} $\leftarrow$ \texttt{<signal handler called>} $\leftarrow$ \texttt{sys\_write} $\leftarrow$ \texttt{app\_main} (the innermost frame may be \texttt{irq\_save} or \texttt{irq\_restore} instead, depending on where you interrupt it).
-
-Here is what happened. The first \texttt{uart\_write} filled the ring buffer and \textbf{primed} the UART with the first byte: that is the \texttt{0} you see. From then on the buffer stays full. Only \texttt{UART0TX\_Handler}, at priority \textbf{\texttt{0xC0}}, can empty it, but the CPU is inside the SVCall handler, at \textbf{\texttt{0x80}}, which is more urgent. The TX interrupt stays \textbf{pending} forever, and the loop waits forever for room that never comes. SysTick, at \texttt{0xE0}, is blocked too: the clock stops.
-
-The fix is the design you already have. The kernel \textbf{never waits}: \texttt{sys\_write} returns the accepted count, and \texttt{write\_all} does the waiting with \texttt{wfi} in \textbf{Thread mode}, where the TX interrupt can run. Undo both edits.
-
-\subsection{Privilege and Layers in GDB}
-We can verify the privilege separation in GDB by setting breakpoints in \texttt{main} and \texttt{app\_main} and inspecting \texttt{\$control}:
-\begin{lstlisting}[language=bash]
-(gdb) break main
-(gdb) break app_main
-(gdb) continue          -> Breakpoint 1, main ()
-(gdb) p/x $control      -> 0x0          (privileged)
-(gdb) continue          -> Breakpoint 2, app_main ()
-(gdb) p/x $control      -> 0x1          (nPRIV set: unprivileged)
-\end{lstlisting}
-
-Next, place a breakpoint inside \texttt{sys\_write\_impl}:
-\begin{lstlisting}[language=bash]
-(gdb) break sys_write_impl
-(gdb) continue
-(gdb) p/x $control
-(gdb) p/x $xpsr & 0x1ff
-(gdb) bt
-\end{lstlisting}
-Inside \texttt{sys\_write\_impl}, \texttt{\$control} is still \texttt{0x1} (\texttt{nPRIV} remains set); the CPU has privileged access because it is running in Handler mode. The low 9 bits of \texttt{xPSR} hold the exception number, where \texttt{0xb} (11) identifies SVCall.
-
-The backtrace (\texttt{bt}) shows every layer of the call path:
-\begin{lstlisting}[language=bash]
-#0  sys_write_impl (a0=..., a1=34, a2=...)
-#1  svc_dispatch (frame=...)
-#2  <signal handler called>
-#3  sys_write ()
-#4  write_all (buf=... "app: hello from unprivileged code\n", len=34)
-#5  printf (fmt=...)
-#6  app_main ()
-#7  main ()
-\end{lstlisting}
-The \texttt{<signal handler called>} frame is GDB's marker for an \textbf{exception entry}: frames above it run in privileged Handler mode, while frames below it belong to the unprivileged user application.
-
-\section{Where to Find the Code}
-\texttt{week-03/} holds two sibling folders, \texttt{base/} and \texttt{solution/}, each with its own \texttt{Makefile} and building independently. All paths in these notes are relative to \texttt{week-03/solution/}. The base's \texttt{README.md} lists, folder by folder, what is given and what you write across the three units.
-
-The starting point is \texttt{week-03/base/}: the full \texttt{Makefile} (\texttt{run}, \texttt{debug}, \texttt{run-trace}), the linker script, the complete \texttt{include/cmsdk.h}, \texttt{boot/startup.s} with CPU setup and the 16 core slots, silent fault handlers in \texttt{kernel/faults.c}, every API header, the number helpers in \texttt{lib/format.c}, a \texttt{src/main.c} that prints nothing, and marker files for everything else.
-
-The finished result is in \texttt{week-03/solution/}, organized by OS layer:
-\begin{itemize}
-  \item \texttt{boot/startup.s}: the 48-entry vector table \texttt{isr\_vector}, the weak defaults, and \texttt{Reset\_Handler};
-  \item \texttt{include/cmsdk.h}: the hardware register map (Unit~1);
-  \item \texttt{drivers/uart.c} (\textbf{driver}): \texttt{uart\_init}, \texttt{uart\_putc\_polled}, \texttt{uart\_getc\_polled}, the TX ring buffer, \texttt{uart\_write}, and \texttt{UART0TX\_Handler};
-  \item \texttt{drivers/systick.c} (\textbf{driver}): \texttt{systick\_init}, \texttt{SysTick\_Handler}, and \texttt{systick\_uptime\_ms};
-  \item \texttt{lib/format.c}: \texttt{vformat}, shared by both print functions;
-  \item \texttt{kernel/kprintf.c}: \texttt{kprintf}, the kernel's polled print;
-  \item \texttt{kernel/faults.c}: the four fault handlers that print \texttt{HFSR} or \texttt{CFSR};
-  \item \texttt{kernel/irq.s}: \texttt{irq\_save} and \texttt{irq\_restore};
-  \item \texttt{kernel/svc\_entry.s} (\textbf{kernel entry}): the two-instruction \texttt{SVC\_Handler};
-  \item \texttt{kernel/syscall.c} (\textbf{dispatcher and services}): the syscall implementations, \texttt{table}, and \texttt{svc\_dispatch};
-  \item \texttt{lib/syscalls.s} and \texttt{lib/syscalls.h} (\textbf{user stubs}): \texttt{sys\_write}, \texttt{sys\_read}, and \texttt{sys\_uptime} (\texttt{svc \#n ; bx lr}) plus service numbers;
-  \item \texttt{lib/printf.c} (\textbf{user library}): \texttt{write\_all}, \texttt{printf}, and \texttt{sleep\_ms};
-  \item \texttt{src/main.c} (\textbf{kernel boot}): initializes hardware, drops privilege, and calls \texttt{app\_main};
-  \item \texttt{src/app.c} (\textbf{application}): \texttt{app\_main}, the unprivileged user task.
-\end{itemize}
-
-Every file in \texttt{solution/} is commented line by line. If these notes and the code ever disagree, the code is the reference.
+% ======================== FINE TABELLA ========================
