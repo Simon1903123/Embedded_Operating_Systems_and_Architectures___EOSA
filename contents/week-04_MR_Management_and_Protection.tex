@@ -99,11 +99,21 @@ The other half of placement is \textbf{when} addresses are decided.
     \item \textbf{Dynamic allocation} hands out memory at \textbf{run time} from a \textbf{heap} (\texttt{malloc}/\texttt{free}). It is flexible, but the layout depends on the order of the calls. After many allocations and frees, free memory is split into small \textbf{holes}: with 4 free blocks in total but no hole of 3, a request for 3 blocks \textbf{fails} although memory is free (\textbf{external fragmentation}).
 \end{itemize}
 
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{contents/images/week-04/StaticVSDyn.png}
+\end{figure}
+
 For an embedded system dynamic allocation has two more problems: it can \textbf{fail at run time}, where nobody can read the error, and the time of a \texttt{malloc} depends on how many blocks it must search, so it is \textbf{not constant}, which is bad for deadlines. This course allocates \textbf{statically}; every partition of Unit 2 is fixed at link time.
 
 \subsection{The Memory-Management Spectrum}
 
 Memory management methods can be lined up by asking two questions: is the address changed before it reaches memory (\textbf{translation}), and does the hardware stop forbidden accesses (\textbf{protection})?
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{contents/images/week-04/Covered_path.png}
+\end{figure}
 
 \begin{itemize}
     \item \textbf{Flat.} Everything shares all of RAM, with no translation and no protection. The starting code is here.
@@ -154,6 +164,16 @@ An address splits into a \textbf{page number} and an \textbf{offset}. Only the p
              dir = 1       tbl = 3       offset = 7
 \end{lstlisting}
 
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{contents/images/week-04/Paging.png}
+\end{figure}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{contents/images/week-04/Paging_2.png}
+\end{figure}
+
 \begin{enumerate}
     \item Read directory entry 1, at \texttt{PTBR + 1 $\times$ 4}; say it holds the second-level table at \texttt{0x00021000}.
     \item Read entry 3 of that table, at \texttt{0x00021000 + 3 $\times$ 4 = 0x0002100C}; say it holds frame \texttt{0x0009A000}, valid.
@@ -180,6 +200,11 @@ h = 0.80    EAT = 0.80 * 10 + 0.20 * 30 = 14.0 ns        +40%
 h = 0.99    EAT = 0.99 * 10 + 0.01 * 30 = 10.2 ns        +2%
 \end{lstlisting}
 
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{contents/images/week-04/TLB.png}
+\end{figure}
+
 The misses, not the hits, set the cost, so \texttt{h} must be close to 1. Useful rules:
 
 \begin{itemize}
@@ -193,7 +218,6 @@ The misses, not the hits, set the cost, so \texttt{h} must be close to 1. Useful
 \textbf{Exercise.} With \texttt{m = 50 ns} and a two-level table: with no TLB the EAT is 150 ns (3x slower); with \texttt{h = 0.90} it is $0.90 \times 50 + 0.10 \times 150 = 60$ ns (+20\%); with \texttt{h = 0.98} it is 52 ns (+4\%); for a slowdown of at most 10\% we need $h \ge 0.95$. With four levels and \texttt{h = 0.98} a miss costs 250 ns, so EAT $= 0.98 \times 50 + 0.02 \times 250 = 54$ ns (+8\%). A loop that reads a 64 KiB array of 32-bit words once, with 4 KiB pages and an empty TLB, takes 16 misses out of 16\,384 accesses, so $h = 1 - 16/16\,384 \approx 0.999$.
 
 \subsection{Page Faults and Virtual Memory}
-
 If the walk finds an entry with the valid bit clear, or the access breaks its permissions (a write to a read-only page, user code touching a kernel page), the MMU raises a \textbf{page fault}, an exception that records the address wanted:
 
 \begin{enumerate}
@@ -202,6 +226,12 @@ If the walk finds an entry with the valid bit clear, or the access breaks its pe
     \item The handler returns and the hardware \textbf{restarts the faulting instruction}. It is restarted, not skipped, because its load or store never happened; restarting makes the fault invisible to the program.
 \end{enumerate}
 
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{contents/images/week-04/Page_Faults.png}
+    \caption{Page Hits and Faults}
+\end{figure}
+
 \textbf{Cost.} A fault that reads the disk costs \textbf{milliseconds}, against nanoseconds for an access. With \texttt{p} the page-fault rate, $\text{EAT} = (1 - p) \times m + p \times \text{(service time)}$. With \texttt{m = 200 ns} and a service time of 8 ms: $p = 1/1000$ gives about 8.2 $\mu$s, \textbf{forty times slower}; to lose at most 10\%, $p \le 2.5 \times 10^{-6}$, fewer than \textbf{one access in 400\,000}. Virtual memory works only because locality makes faults so rare, and one fault stops the program for milliseconds at an unpredictable moment: a real-time system cannot accept that.
 
 \textbf{Virtual memory} is paging plus the disk, and it gives two things:
@@ -209,6 +239,12 @@ If the walk finds an entry with the valid bit clear, or the access breaks its pe
     \item \textbf{Isolation.} Each process has its own page table, so the same virtual address lands in different frames for different processes. A process cannot even \textbf{name} another process's memory: its own table translates every address into its own frames, or into a page fault.
     \item \textbf{More than RAM.} Pages not in use wait on disk and a page fault brings them back, so programs together can use more memory than the RAM has, as long as the pages in use at any moment fit.
 \end{itemize}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{contents/images/week-04/Virtual_Memory.png}
+    \caption{Memory Virtualitation}
+\end{figure}
 
 This answers the fourth job of the OS, and protection in the strongest way, but it needs an MMU, page tables in RAM and a disk.
 
@@ -220,6 +256,11 @@ A microcontroller has neither page tables nor a disk. The Cortex-M3 has an \text
     \item On \textbf{every} load, store and fetch the MPU checks the address against the regions. If allowed, the access goes on at the \textbf{same} address; otherwise it is stopped (the store writes nothing, the load reads nothing) and the CPU raises a \textbf{MemManage} fault.
     \item There is \textbf{no translation}: every task sees real physical addresses, and the MPU only answers ``may this code touch this address?''
 \end{itemize}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{contents/images/week-04/MPU_vs_MMU.png}
+\end{figure}
 
 Microcontroller cores (Cortex-M) have an MPU; application cores (Cortex-A, in phones and Linux boards) have an MMU, which turns VA into PA or raises a page fault. The MPU of this board is \textbf{off} after reset, which is why the rogue write went through; you turn it on in Unit 3.
 
@@ -237,7 +278,7 @@ What you give up is translation: every task must be placed at its own real addre
 
 The last demo shows a different leak. With \texttt{DEMO=badptr}, Task B asks the \textbf{kernel} to touch kernel memory, by passing a kernel address to the system call of Week 3 (``send these \texttt{len} bytes from \texttt{buf} to the console''):
 
-\begin{lstlisting}[language=C]
+\begin{lstlisting}
 int r = sys_write( (const char *) &uptime_ms, 16 );
 printf( "\nB: sys_write returned %d\n", r );
 \end{lstlisting}
@@ -262,6 +303,7 @@ The consequence for Unit 3: an MPU that restricts only unprivileged code would \
     \item \textbf{Cost of paging:} $\text{EAT} = h \times m + (1 - h) \times 3m$ with two levels; \texttt{h} must be close to 1 and page faults extremely rare.
     \item An \textbf{MPU} checks every access against regions, with no translation: cheap, low-power, predictable. The Cortex-M3 has one, switched off. Without it, \texttt{DEMO=rogue} changes the kernel's clock and \texttt{DEMO=badptr} leaks kernel bytes through a system call.
 \end{itemize}
+
 
 \section{Unit 2: Task Partitions}
 
@@ -291,7 +333,7 @@ The partitions follow five rules:
 
 An \textbf{output section} has two addresses: the \textbf{run address} (VMA), where the code uses it, and the \textbf{load address} (LMA), where its bytes are stored in the image. They are usually equal, but not for \texttt{.data}. The partition block uses:
 
-\begin{lstlisting}[language=C]
+\begin{lstlisting}
 .task_a_data : { ... } > RAM AT > FLASH          /* runs in RAM, initial bytes stored in FLASH */
 _task_a_data_load = LOADADDR(.task_a_data);      /* the FLASH address of those bytes */
 .task_a_stack ALIGN(ORIGIN(RAM), 4096) (NOLOAD) : { ... } > RAM
@@ -400,94 +442,119 @@ The Cortex-M3 has two stack pointers; \texttt{sp} (\texttt{r13}) is the one in u
     \item \textbf{EXC\_RETURN} is the value in \texttt{lr} that ends an exception: \texttt{0xFFFFFFF9} returns to thread mode on MSP, \texttt{0xFFFFFFFD} to thread mode on PSP (the hardware sets SPSEL accordingly). On exception \textbf{entry} the hardware puts an EXC\_RETURN in \texttt{lr}, and its \textbf{bit 2} tells which stack holds the pushed frame: 1 = PSP, 0 = MSP.
 \end{itemize}
 
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{contents/images/week-04/PSP_and_MSP.png}
+\end{figure}
+
 The stack must be \textbf{inside the partition}: it holds locals, return addresses and the exception frames. If it lived in kernel RAM, you could not restrict a task to its own 4 KB without taking its stack away. And since handler mode always uses MSP, the kernel's work (interrupts, system calls) never runs on a task's stack.
 
-\subsection{Entering a Task: \texttt{task\_launch} and Its Frame}
+\subsection{Starting a Task: \texttt{task\_launch} and the Fake Frame}
 
-The kernel cannot simply \textbf{call} a task: it is inside the SVC handler (handler mode, privileged, MSP) while the task must run in thread mode, unprivileged, on PSP, and a call keeps mode, privilege and stack of the caller. The only mechanism that changes all three at once is the \textbf{exception return}: the CPU pops 8 words (r0--r3, r12, lr, pc, xPSR) from the stack selected by EXC\_RETURN and resumes at the popped pc. So the kernel \textbf{fakes an interruption}: it writes on the task's stack the frame the hardware would have pushed just before the task's first instruction, points PSP at it, and returns with \texttt{0xFFFFFFFD}.
+\paragraph*{Why use a Fake Stack Frame?}
 
-\texttt{main} (privileged, on MSP) starts everything with one system call, number 5 (\texttt{SYS\_START\_TASKS}): \texttt{\_\_asm volatile ( "svc \#5" ... )}, followed by \texttt{kprintf( "all tasks finished\textbackslash n" )}. \texttt{svc\_dispatch} calls \texttt{task\_start\_first}, which calls \texttt{task\_launch( 0 )}, inside the exception, privileged and on MSP. It does three things.
+The kernel cannot simply launch a user task using a standard function call. Because the kernel operates in \textbf{Handler Mode} (using the Main Stack Pointer, MSP, with full privileges), a standard call would cause the task to inherit this exact state. This would destroy system isolation, as a bug in the user task could silently corrupt kernel memory or crash the entire system.
 
-\textbf{1. Bookkeeping.} It records the running task, prints a message, prepares the MPU (empty in the base) and copies the variables:
+To safely execute, a user task must run in a strictly confined environment:
+\begin{enumerate}
+    \item In \textbf{Thread Mode} (normal execution state).
+    \item \textbf{Unprivileged} (restricted access to system registers and memory).
+    \item On its own \textbf{Process Stack Pointer (PSP)}.
+\end{enumerate}
 
-\begin{lstlisting}[language=C]
-current = i;
-kprintf( "starting task %s\n", t->name );
-mpu_set_task_region( t->part_start, t->part_end - t->part_start );
-partition_init( t );
-\end{lstlisting}
+On the ARM Cortex-M architecture, there is no single instruction to simultaneously change the stack pointer, drop privileges, switch execution modes, and jump to a new address. The \emph{only} hardware mechanism capable of performing this critical ``triple jump'' safely and atomically is an \textbf{Exception Return}.
 
-\textbf{2. The hand-written frame}, at \texttt{frame = t->stack\_top - 8} (8 words, 32 bytes, below the stack top). For Task A, with stack top \texttt{0x20000400}:
-
-\begin{center}
-\begin{tabular}{|l|l|l|p{4.6cm}|}
-\hline
-\textbf{Word} & \textbf{Address (A)} & \textbf{Register} & \textbf{Value written} \\
-\hline
-\texttt{frame[0..4]} & \texttt{0x200003e0}--\texttt{0x200003f3} & r0--r3, r12 & 0 \\
-\hline
-\texttt{frame[5]} & \texttt{0x200003f4} & lr & \texttt{task\_exit} \\
-\hline
-\texttt{frame[6]} & \texttt{0x200003f8} & pc & \texttt{t->entry \& \textasciitilde1}: \texttt{task\_a} \\
-\hline
-\texttt{frame[7]} & \texttt{0x200003fc} & xPSR & \texttt{0x01000000} (Thumb bit only) \\
-\hline
-\end{tabular}
-\end{center}
-
-\textbf{3. Switch.} An \texttt{asm} block sets PSP and nPRIV (C cannot name PSP or CONTROL), then the function returns \texttt{0xFFFFFFFD}:
-
-\begin{lstlisting}[language=C]
-__asm volatile (
-    "msr psp, %0        \n" /* PSP = frame */
-    "mrs r1, control    \n" /* r1 = CONTROL */
-    "orr r1, r1, #1     \n" /* r1 |= 1: set nPRIV */
-    "msr control, r1    \n" /* CONTROL = r1 */
-    "isb                \n" /* make the new CONTROL take effect now */
-    : : "r" ( frame ) : "r1", "memory" );
-return EXC_RETURN_THREAD_PSP;               /* 0xFFFFFFFD */
-\end{lstlisting}
-
-The value goes back through \texttt{svc\_dispatch} to \texttt{SVC\_Handler}, the hardware pops the frame and the CPU continues at \texttt{task\_a}, in thread mode, unprivileged, on PSP. Why it is written this way:
-
+Since a newly created task has never actually been interrupted, the kernel must trick the hardware by \textbf{faking an interrupt context}:
 \begin{itemize}
-    \item \textbf{Return \texttt{0xFFFFFFFD}, not \texttt{t->entry()}.} A call would run the task in handler mode, privileged, inside the \texttt{svc}, with no protection and a handler that never ends. Only an exception return enters thread mode on PSP unprivileged in one step.
-    \item \textbf{PSP and CONTROL after the return.} PSP is \texttt{0x20000400} (the 32-byte frame has been popped); CONTROL is \textbf{3}: the code sets only nPRIV, the return sets SPSEL. Setting nPRIV inside the handler has no effect until the return, because handler mode is always privileged.
-    \item \textbf{xPSR bit 24} is the \textbf{T (Thumb) bit}: the Cortex-M runs only Thumb code, and popping T = 0 raises a UsageFault (INVSTATE) at the first instruction. For a similar reason \texttt{frame[6]} has bit 0 cleared: the popped pc must be a real instruction address.
-    \item \textbf{When \texttt{task\_a} returns}, it returns through \texttt{lr}, popped from \texttt{frame[5]}, that is into \texttt{task\_exit}, which calls \texttt{sys\_exit}.
+    \item \textbf{Faking the past:} The kernel manually crafts an 8-word (32-byte) frame on the task's stack. This contains the exact layout of data the hardware would expect to find if the task had been previously running and then interrupted (including the starting \texttt{pc} and the \texttt{xPSR} status register).
+    \item \textbf{Triggering the mechanism:} The kernel points the PSP to this newly created frame and commands the CPU to return from the current interrupt using the magic code \texttt{0xFFFFFFFD}.
+    \item \textbf{The hardware restores:} The CPU blindly accepts the fake frame. It pops the registers from the PSP, drops its privileges, switches to Thread Mode, and jumps to the task's starting address, successfully launching it in the exact restricted conditions required by the Operating System.
 \end{itemize}
 
-\subsection{\texttt{SVC\_Handler} and \texttt{svc\_dispatch}}
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{contents/images/week-04/Fake_Frame.png}
+\end{figure}
 
-In Week 3 \texttt{SVC\_Handler} (\texttt{kernel/svc\_entry.s}) was two instructions (\texttt{mrs r0, msp} and \texttt{b svc\_dispatch}). Now an \texttt{svc} comes from two places: from tasks, on PSP, and once from \texttt{main}, on MSP, so the handler must first find which stack holds the frame. It reads \textbf{bit 2 of \texttt{lr}}: \texttt{0xFFFFFFF9} is \texttt{...1001}$_2$ (bit 2 = 0, MSP) and \texttt{0xFFFFFFFD} is \texttt{...1101}$_2$ (bit 2 = 1, PSP).
+\paragraph*{The three steps of \texttt{task\_launch}}
+The boot process starts from \texttt{main} with the \texttt{svc \#5} system call. The handler intercepts the call and launches \texttt{task\_launch()}, which performs three operations:
 
+\begin{enumerate}
+    \item \textbf{Bookkeeping:} records which task is starting, prepares the MPU to protect its partition, and initializes its RAM variables (\texttt{partition\_init()}).
+    
+    \item \textbf{Manual Frame Creation:} allocates 8 words (32 bytes) just below the task's stack top to set up the initial CPU context.
+
+    \begin{center}
+    \begin{tabular}{|l|l|p{8cm}|}
+    \hline
+    \textbf{Index} & \textbf{Register} & \textbf{Value and Purpose} \\
+    \hline
+    \texttt{frame[0..4]} & \texttt{r0--r3, r12} & \texttt{0} (unused at startup). \\
+    \hline
+    \texttt{frame[5]} & \texttt{lr} (Link) & \texttt{task\_exit}: if the task function returns, it will jump here to exit cleanly instead of crashing. \\
+    \hline
+    \texttt{frame[6]} & \texttt{pc} (Program) & The task's entry point address (e.g., \texttt{task\_a}). \\
+    \hline
+    \texttt{frame[7]} & \texttt{xPSR} & \texttt{0x01000000}: sets the \textbf{Thumb bit}. Mandatory on Cortex-M processors; without it, a crash (\texttt{UsageFault}) occurs. \\
+    \hline
+    \end{tabular}
+    \end{center}
+
+    \item \textbf{Context Switch:} through an Assembly block, it loads the frame address into the \texttt{PSP} register, sets the \texttt{nPRIV} bit in the \texttt{CONTROL} system register (to drop privileges), and forces the return of the value \texttt{0xFFFFFFFD} (\texttt{EXC\_RETURN\_THREAD\_PSP}).
+\end{enumerate}
+
+\paragraph*{The final result}
+When the handler returns \texttt{0xFFFFFFFD}, the hardware "falls for" the fake exception: it pops the 32 bytes, restoring the registers as dictated by the frame. Execution thus jumps to the task's \texttt{pc} (Thread mode, unprivileged), while the \texttt{PSP}, freed from the frame, sits exactly at the top of the stack, ready for standard program execution.
+
+\subsection{SVC\_Handler and SVC\_dispatch}
+In the basic version of our OS, system calls (\texttt{svc}) always returned to the exact same place they came from. Now, things are more complex because an \texttt{svc} can be triggered from two different environments:
+\begin{enumerate}
+    \item From \textbf{main()}: just once, to start the OS. It uses the \textbf{MSP} (Main Stack Pointer).
+    \item From \textbf{tasks}: for standard system calls. They use the \textbf{PSP} (Process Stack Pointer).
+\end{enumerate}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{contents/images/week-04/SVC_Handler_and_Dispatcher.png}
+\end{figure}
+
+\paragraph*{1. Finding the right Stack (Assembly)}
+When the handler starts, it needs to find the saved CPU state (the frame). To know which stack was active, the hardware leaves a clue in the \textbf{Link Register (lr)} called the \texttt{EXC\_RETURN} code. 
+By checking \textbf{bit 2} of this code, the handler knows where to look:
+\begin{itemize}
+    \item \texttt{0xFFFFFFF9} (bit 2 is \textbf{0}): The frame is on the \textbf{MSP}.
+    \item \texttt{0xFFFFFFFD} (bit 2 is \textbf{1}): The frame is on the \textbf{PSP}.
+\end{itemize}
+
+Here is how the assembly checks this and calls the C dispatcher:
 \begin{lstlisting}
-    tst lr, #4                  /* flags = lr & 4: is bit 2 set? */
-    ite eq                      /* if ((lr & 4) == 0) ... else ... */
-    mrseq r0, msp               /*     frame = MSP;  // came from main() */
-    mrsne r0, psp               /* else frame = PSP;  // came from a task */
-    mov r1, lr                  /* exc_return = lr: second argument */
-    bl svc_dispatch             /* r0 = svc_dispatch(frame, exc_return) */
-    bx r0                       /* return_from_exception(r0) */
+    tst lr, #4        /* Check bit 2 of LR (LR AND 4) */
+    ite eq            /* If-Then-Else based on the result */
+    mrseq r0, msp     /* IF bit 2 == 0: r0 = MSP */
+    mrsne r0, psp     /* ELSE bit 2 == 1: r0 = PSP */
+    
+    mov r1, lr        /* r1 = exc_return (save LR before calling C) */
+    bl svc_dispatch   /* Call C: r0 = svc_dispatch(r0=frame, r1=exc_return) */
+    bx r0             /* Return from exception using the code C gave us in r0 */
 \end{lstlisting}
 
+\paragraph*{2. Directing the Flow (C code)}
+Previously, the assembly handler ended with a simple branch (\texttt{b}) to go back. However, calls like \texttt{SYS\_START\_TASKS} and \texttt{SYS\_EXIT} must change the flow entirely (e.g., leaving \texttt{main} to enter a task). 
+
+To achieve this, \texttt{svc\_dispatch} is now responsible for deciding \textbf{where to return}. It takes the frame and the original \texttt{EXC\_RETURN} code as arguments, and \textbf{returns a new EXC\_RETURN code} back to the assembly:
+
+\begin{lstlisting}[language=C]
+uint32_t svc_dispatch( uint32_t *frame, uint32_t exc_return )
+\end{lstlisting}
+
+Inside the C function, it handles three specific scenarios:
 \begin{itemize}
-    \item \textbf{\texttt{tst}} computes the AND like \texttt{ands} but stores nothing, only sets the flags: \texttt{tst lr, \#4} gives Z = 1 when bit 2 is 0.
-    \item \textbf{\texttt{ite eq}} (if-then-else) makes the next two instructions conditional, \texttt{eq} (Z = 1) and \texttt{ne} (Z = 0): exactly one of the two \texttt{mrs} runs, so \texttt{r0} holds the right frame.
-    \item \texttt{lr} is copied into \texttt{r1} \textbf{before} \texttt{bl}, which overwrites it. The arguments follow the AAPCS: frame in \texttt{r0}, EXC\_RETURN in \texttt{r1}.
+    \item \textbf{\texttt{SYS\_START\_TASKS}:} Instead of returning to \texttt{main}, it returns \texttt{task\_start\_first()}, returning the code needed to launch Task A.
+    \item \textbf{\texttt{SYS\_EXIT}:} The task is done. It returns \texttt{task\_exit\_current()}, giving the code to launch the next task or go back to \texttt{main}.
+    \item \textbf{Normal calls (Read/Write/etc.):} The kernel simply writes the function's result into \texttt{frame[0]} (which becomes \texttt{r0} for the task) and returns the \textbf{original} \texttt{exc\_return}. Execution resumes exactly where it left off.
 \end{itemize}
 
-When the call comes from \texttt{main}, the frame is on MSP and \texttt{lr = 0xFFFFFFF9} (measured \texttt{msp = 0x203fffd8}, 40 bytes below the top: the 32-byte frame plus 8 bytes pushed by \texttt{main}). When it comes from Task A, the frame is on A's PSP inside A's partition and \texttt{lr = 0xFFFFFFFD}.
-
-\textbf{Why Week 3's \texttt{b svc\_dispatch} no longer works.} With \texttt{b}, the exception always returned where it came from, but \texttt{SYS\_START\_TASKS} and \texttt{SYS\_EXIT} must return \textbf{somewhere else} (into a task, or back to \texttt{main}). So \texttt{svc\_dispatch( uint32\_t *frame, uint32\_t exc\_return )} now \textbf{returns the EXC\_RETURN to use}, and the entry ends with \texttt{bx r0}, which, with an EXC\_RETURN value in \texttt{r0}, triggers the exception return. It derives the caller with \texttt{from\_task = ( exc\_return \& EXC\_RETURN\_PSP\_BIT ) != 0} and handles three cases:
-
-\begin{itemize}
-    \item \texttt{SYS\_EXIT} from a task: \texttt{return task\_exit\_current();} starts the next task or goes back to \texttt{main} (read in Unit 3);
-    \item \texttt{SYS\_START\_TASKS} from \texttt{main}, with no task running: \texttt{return task\_start\_first();} enters Task A. A task that tries number 5 falls through to the table and gets $-1$ like any unknown number;
-    \item every normal service (\texttt{SYS\_WRITE}, \texttt{SYS\_READ}, \texttt{SYS\_UPTIME}): the result goes into \texttt{frame[0]} and \texttt{exc\_return} is returned unchanged, so the exception goes back to the caller.
-\end{itemize}
-
-This respects the rule of Week 3 that the kernel \textbf{never waits inside a handler}: each \texttt{svc} ends at once, into whatever should run next. \texttt{main}'s \texttt{svc \#5} ``returns'' only after the last task has exited, with \texttt{0xFFFFFFF9}.
+By doing this, the kernel respects a golden rule: \textbf{it never waits inside a handler}. Every system call ends immediately, smoothly guiding the CPU into whatever should run next.
 
 \subsection{How a Task Ends: \texttt{task\_exit} and \texttt{sys\_exit}}
 
@@ -498,6 +565,11 @@ sys_exit:                       task_exit:
     svc #4                          bl sys_exit    /* does not come back */
     b sys_exit                      b task_exit    /* never reached */
 \end{lstlisting}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{contents/images/week-04/Exit_Task.png}
+\end{figure}
 
 A task can therefore end by calling \texttt{sys\_exit()} itself, or simply by returning from its function, landing in \texttt{task\_exit}; Task A uses the second way. The kernel side, \texttt{task\_exit\_current}, is read in Unit 3.
 
@@ -738,11 +810,20 @@ When the MPU refuses an access, the access does \textbf{not} happen (a store wri
 
 \texttt{CFSR} is read once so that every test sees the same value, and the cause tests are separate \texttt{if}s rather than an \texttt{else if} chain because several bits can be set together. The masks \texttt{SCB\_CFSR\_...} are in \texttt{include/cmsdk.h}. \texttt{kprintf} works inside the handler because the handler is privileged.
 
-\subsection{Running with the MPU On}
+\subsection{Running with the MPU On: Protection in Action}
 
-\textbf{Normal run.} \texttt{make run} prints the \textbf{same lines} as in Units 1 and 2. A and B can still print, although the MPU lets them touch only FLASH and their own partition, because those are the only areas they touch themselves: code and string constants are in FLASH (Region 0), while variables, stack and the \texttt{printf} buffer (a local, hence on the task's stack) are in the partition (Region 1). The tasks never touch the UART: \texttt{sys\_write} and \texttt{sys\_uptime} run in the privileged kernel, which keeps the default map, and the SysTick and UART handlers are privileged too. While A runs, Region 1 has \texttt{RBAR = 0x20000011}; from \texttt{starting task B} on it has \texttt{0x20001011}; Region 0 stays the same.
+Once the MPU is active, it strictly enforces the memory boundaries set by the linker. Here is how it affects different execution scenarios:
 
-\textbf{\texttt{DEMO=rogue}.} B's store to \texttt{uptime\_ms} is refused:
+\paragraph*{1. The Normal Run (\texttt{make run})}
+The system behaves exactly as in previous units, but now under hardware supervision. Tasks A and B run correctly because the MPU permits access to only two areas:
+\begin{itemize}
+    \item \textbf{Region 0 (FLASH):} Where the code and string constants reside.
+    \item \textbf{Region 1 (Task Partition):} Where the task's variables, stack, and local buffers (like the \texttt{printf} buffer) live. 
+\end{itemize}
+When a task calls \texttt{sys\_write} or \texttt{sys\_uptime}, the context switches to the kernel (Handler Mode). The kernel is privileged and bypasses the MPU's user restrictions, freely accessing the UART and kernel data. As the OS switches from Task A to Task B, the MPU's Region 1 is simply updated on the fly to point to B's partition instead of A's.
+
+\paragraph*{2. The Rogue Task (\texttt{DEMO=rogue})}
+If Task B maliciously (or accidentally) attempts to overwrite a kernel variable like \texttt{uptime\_ms}, the MPU intervenes instantly. The store instruction \textbf{never executes}. Instead, the hardware halts the task and triggers a \textbf{MemManage Fault}:
 
 \begin{lstlisting}
 B: writing to the kernel's uptime counter
@@ -751,9 +832,14 @@ MemManage: CFSR=0x82
   cause: data access
 \end{lstlisting}
 
-\texttt{0x82} $=$ \texttt{0x80} $+$ \texttt{0x02}, that is \textbf{MMARVALID} + \textbf{DACCVIOL}: a data access was refused and \texttt{MMFAR} holds its address. With \texttt{arm-none-eabi-nm build/demo-rogue/scratch-os.axf | grep ' uptime\_ms\$'}, \texttt{0x20002004} is the address of \texttt{uptime\_ms}: the report gives the address of the culprit and \texttt{nm} turns it into a name. The store \textbf{never happened}, so the clock is intact, and the handler halts the system: the MPU caught the bug at the very instruction that caused it, not later and somewhere else.
+\begin{itemize}
+    \item \textbf{\texttt{0x82} (DACCVIOL + MMARVALID):} Means a data access was denied, and the faulting address is securely recorded.
+    \item \textbf{\texttt{0x20002004}:} The exact address of \texttt{uptime\_ms}.
+\end{itemize}
+The clock remains uncorrupted. The bug is caught exactly at the instruction that caused it, rather than causing a mysterious failure later.
 
-\textbf{\texttt{DEMO=overflow}.} B calls \texttt{eat\_stack}, which recurses 4 levels with a 1 KB local array each, needing about 4 KB of stack against B's 1 KB:
+\paragraph*{3. The Stack Overflow (\texttt{DEMO=overflow})}
+If Task B enters deep recursion (e.g., requesting 4 KB of stack space while only 1 KB is available), its stack pointer pushes past its lower boundary.
 
 \begin{lstlisting}
 B: recursing
@@ -763,28 +849,37 @@ MemManage: CFSR=0x92
   cause: stacking
 \end{lstlisting}
 
-\texttt{0x92} $=$ \texttt{0x80} $+$ \texttt{0x10} $+$ \texttt{0x02}: MMARVALID + \textbf{MSTKERR} + DACCVIOL. The address \texttt{0x20000fdc} is 36 bytes \textbf{below} B's partition (\texttt{0x20001000}--\texttt{0x20002000}), inside \textbf{A's partition}: Region 1 covers only B, so the first store there is refused (DACCVIOL). The \textbf{stacking} cause appears because, to enter the handler, the CPU pushes the 8-word frame on the stack in use, the PSP, which also points below the partition: that push is refused too (MSTKERR). The frame is lost, but the handler runs on the MSP, so the report is still correct. This is why Unit 2 put the stack at the \textbf{bottom}: an overflow leaves the partition at once and faults at the first store. Without the MPU, the same demo keeps writing into other memory and ends much later in \texttt{UsageFault: CFSR=0x20000} (INVSTATE, from a corrupted state popped from the stack), a report far from the real cause.
-
-\subsection{Why the Kernel Must Check Pointers}
-
-\texttt{DEMO=badptr} is \textbf{not} stopped by the MPU: \texttt{sys\_write\_impl} (\texttt{kernel/syscall.c}) runs inside \texttt{SVC\_Handler}, \textbf{privileged}, and \texttt{PRIVDEFENA} gives privileged code the whole default map. The kernel must therefore check every pointer a task gives it against what \textbf{that task} could access by itself. For \texttt{sys\_write}, the whole buffer \texttt{[buf, buf + len)} must lie \textbf{entirely} inside the caller's partition or \textbf{entirely} inside FLASH (\texttt{0x00000000}--\texttt{0x00400000}, where string constants are); otherwise the call returns $-1$ and prints nothing. Two prepared helpers:
-
 \begin{itemize}
-    \item \texttt{task\_current} (\texttt{kernel/task.c}) returns the running task's \texttt{struct task}, with \texttt{part\_start} and \texttt{part\_end}; it returns 0 when no task runs, i.e.\ the trusted kernel is calling.
-    \item \texttt{in\_range} (\texttt{kernel/syscall.c}) tells whether \texttt{[p, p + len)} is fully inside \texttt{[start, end)}:
+    \item \textbf{The Address (\texttt{0x20000fdc}):} This address sits just \emph{below} Task B's partition, plunging into Task A's territory. Since Region 1 only covers Task B, the MPU blocks the write (\textbf{DACCVIOL}).
+    \item \textbf{The Stacking Error (\textbf{MSTKERR}):} When the fault occurs, the CPU attempts to save its 8-word state frame onto the active stack (PSP). Because the PSP is already out of bounds, this save operation is also blocked. 
 \end{itemize}
 
+This perfectly demonstrates why Unit 2 placed the stack at the \textbf{bottom} of the partition: the moment the stack overflows, it leaves the allowed memory region, immediately triggering a fault. Without the MPU, this overflow would silently crush Task A's data, eventually causing an incomprehensible crash far from the original error.
+
+\subsection{Why the Kernel Must Validate Pointers (\texttt{DEMO=badptr})}
+
+The MPU \textbf{does not} stop \texttt{DEMO=badptr}. When a task executes a system call like \texttt{sys\_write}, the CPU switches to \textbf{privileged mode} inside the \texttt{SVC\_Handler}. Because the kernel has full access to the memory map, it can read or write anywhere. If a task passes a pointer to kernel-private memory, the kernel will blindly access it on the task's behalf, inadvertently leaking or corrupting data.
+
+To prevent this, the kernel must manually verify that every pointer provided by a task points \textbf{entirely} to memory that the task itself is allowed to access. For \texttt{sys\_write}, the buffer \texttt{[buf, buf + len)} must fall strictly inside either:
+\begin{itemize}
+    \item The caller's \textbf{RAM partition}.
+    \item The \textbf{FLASH memory} (\texttt{0x00000000}--\texttt{0x00400000}), where string constants reside.
+\end{itemize}
+
+\paragraph*{The Danger of Integer Overflow}
+To validate the buffer, the kernel uses the helper \texttt{in\_range(p, len, start, end)}. A naive check like \texttt{p + len <= end} is a severe security flaw: if \texttt{p = 0x20001F00} and \texttt{len = 0xFFFFFF00}, the sum wraps around modulo $2^{32}$ to \texttt{0x20001E00}. This passes the naive check, allowing the task to trick the kernel into reading almost all of RAM.
+
+The secure implementation prevents wrap-around by isolating \texttt{len}:
 \begin{lstlisting}[language=C]
 static int in_range( uint32_t p, uint32_t len, uint32_t start, uint32_t end )
 {
+    /* If p <= end is true, end - p cannot wrap */
     return p >= start && p <= end && len <= end - p;
 }
 \end{lstlisting}
 
-Why not \texttt{p + len <= end}? Because the sum can \textbf{wrap around}: with \texttt{p = 0x20001F00} and \texttt{len = 0xFFFFFF00} it wraps modulo $2^{32}$ to \texttt{0x20001E00}, which passes, and the kernel would read almost all of memory. Once \texttt{p <= end} is known, \texttt{end - p} cannot wrap, so \texttt{len <= end - p} is always correct.
-
-In \texttt{sys\_write\_impl}, replace the comment \texttt{/* >>> UNIT 3: check that [buf, buf + len) is allowed (in\_range). <<< */} with:
-
+\paragraph*{Implementing the Check}
+In \texttt{sys\_write\_impl}, the kernel inspects the caller using \texttt{task\_current()} (which returns \texttt{0} if the trusted kernel itself made the call):
 \begin{lstlisting}[language=C]
     /* Accept the buffer only inside the caller's partition or inside
      * FLASH (string constants). The kernel itself (no task) is trusted. */
@@ -795,42 +890,58 @@ In \texttt{sys\_write\_impl}, replace the comment \texttt{/* >>> UNIT 3: check t
         return ( uint32_t ) -1;
 \end{lstlisting}
 
-The check runs before \texttt{uart\_write}, so a refused buffer is never read (\texttt{in\_range} was marked \texttt{\_\_attribute\_\_(( unused ))} in the base to silence a warning; you may leave it). Now \texttt{make run DEMO=badptr} prints:
-
+\paragraph*{The Result}
+Running \texttt{make run DEMO=badptr} now yields:
 \begin{lstlisting}
-B: hello from task B
-
 B: sys_write returned -1
 B: uptime 4000 ms (second 1)
 \end{lstlisting}
+Because \texttt{0x20002004} (the kernel's uptime variable) is neither in B's partition nor in FLASH, \texttt{sys\_write} immediately returns \texttt{-1} before \texttt{uart\_write} is even called. No kernel data is leaked. 
 
-No kernel bytes appear: \texttt{0x20002004} is neither in B's partition nor in FLASH, so \texttt{sys\_write} returns $-1$ at once. The empty line comes from the \texttt{\textbackslash n} at the start of the demo's \texttt{printf}, and B keeps running, because a refused system call is an error the task can handle, not a fault. B's own \texttt{printf} lines still pass, because their buffer is on B's stack, inside its partition. The \textbf{MPU} stops what a task does by itself and the \textbf{kernel's checks} stop what a task asks the kernel to do: both are needed.
+Task B continues running safely because a refused system call is treated as a standard error that the task can handle, not a hardware fault. 
+
+\textbf{The Takeaway:} The \textbf{MPU} stops unauthorized actions a task attempts directly. \textbf{Kernel pointer checks} stop unauthorized actions a task asks the kernel to perform. Both layers of security are strictly necessary.
 
 \subsection{How a Task Ends: \texttt{task\_exit\_current}}
 
-\texttt{svc\_dispatch} calls \texttt{task\_exit\_current} (\texttt{kernel/task.c}) for \texttt{SYS\_EXIT} from a task:
+When a task finishes and triggers \texttt{SYS\_EXIT} (via \texttt{svc \#4}), the dispatcher calls \texttt{task\_exit\_current()}. This function must decide the next step: launch the next available task, or, if no tasks remain, safely shut down the OS and return to \texttt{main()}.
 
 \begin{lstlisting}[language=C]
 uint32_t task_exit_current( void )
 {
     kprintf( "task %s exited\n", tasks[current].name );
+    
+    /* If there is another task in the list, start it */
     if ( current + 1 < ( int ) NUM_TASKS )
-        return task_launch( current + 1 );      /* start the next task */
+        return task_launch( current + 1 ); 
 
-    current = -1;                               /* no task runs any more */
-    /* asm block: CONTROL = CONTROL & ~1;  clear nPRIV, then isb */
-    return EXC_RETURN_THREAD_MSP;               /* 0xFFFFFFF9: back to main() */
+    /* Otherwise, no tasks are left. Return to main() */
+    current = -1; 
+    
+    /* asm block: CONTROL = CONTROL & ~1;  (Clear nPRIV to regain privileges) */
+    return EXC_RETURN_THREAD_MSP;          /* 0xFFFFFFF9: Thread mode, MSP */
 }
 \end{lstlisting}
 
-When Task A ends:
+The execution flow handles two distinct scenarios:
 
-\begin{enumerate}
-    \item \texttt{task\_a} returns through \texttt{lr} into \texttt{task\_exit}, which calls \texttt{sys\_exit} (\texttt{svc \#4}). \texttt{SVC\_Handler} sees bit 2 of \texttt{lr} set and picks the PSP, \texttt{svc\_dispatch} sees \texttt{SYS\_EXIT} from a task and calls \texttt{task\_exit\_current}, which prints \texttt{task A exited} and returns \texttt{task\_launch( 1 )}: B's frame and \texttt{0xFFFFFFFD}. The exception returns straight into Task B; A's old frame is left on its stack.
-    \item \texttt{task\_launch} calls \texttt{mpu\_set\_task\_region}: Region 1 now covers B's partition (\texttt{RBAR = 0x20001011}). A's partition \textbf{no longer has} a region, so B can neither read nor write it. The ``MPU state'' of a task is just Region 1.
-    \item If B returned too, no task would be left: the kernel sets \texttt{current} to $-1$, clears nPRIV and returns \texttt{0xFFFFFFF9} (thread mode on MSP), so \texttt{main} continues after its \texttt{svc \#5}. Clearing nPRIV is essential: \texttt{main} runs in thread mode, and with nPRIV still 1 it would run \textbf{unprivileged}, its \texttt{kprintf} would fault on the UART (no region), and it could not fix this because unprivileged code cannot write \texttt{CONTROL} (Week 2).
-    \item You never see \texttt{all tasks finished} because B never returns (its loop is infinite); if it did, \texttt{main} would print it and idle in its \texttt{wfi} loop.
-\end{enumerate}
+\paragraph*{1. Switching to the Next Task (e.g., Task A $\rightarrow$ Task B)}
+When Task A ends, it naturally returns to the \texttt{task\_exit} stub, which triggers \texttt{sys\_exit}. The dispatcher catches this and executes \texttt{task\_exit\_current()}.
+\begin{itemize}
+    \item The kernel calls \texttt{task\_launch(1)} to prepare Task B.
+    \item \textbf{The MPU Shift:} Inside \texttt{task\_launch}, the kernel updates the MPU. Region 1 is instantly shifted to cover Task B's partition (\texttt{RBAR = 0x20001011}). Task A's partition is stripped of its protection region, making it completely invisible and inaccessible to Task B.
+    \item The handler returns \texttt{0xFFFFFFFD}, loading Task B's fake frame and starting its execution on the PSP.
+\end{itemize}
+
+\paragraph*{2. The Final Task Exits (Returning to \texttt{main})}
+If the last task in the system were to exit, the kernel must hand control back to \texttt{main()}, which has been paused since the OS booted.
+\begin{itemize}
+    \item The kernel sets \texttt{current = -1} to indicate the OS is idle.
+    \item \textbf{Restoring Privileges:} It clears the \texttt{nPRIV} bit in the \texttt{CONTROL} register. This is absolutely essential: \texttt{main()} runs in Thread Mode, and if it remained unprivileged, it would instantly trigger a Hardware Fault trying to access the UART to print its final message.
+    \item The handler returns \texttt{0xFFFFFFF9}, switching the CPU back to the Main Stack Pointer (\textbf{MSP}) exactly where \texttt{main()} left off.
+\end{itemize}
+
+\textit{Note:} In the current Unit, you never actually see \texttt{main()} print its final success message because Task B contains an infinite loop and never exits.
 
 \subsection{End of Unit 3}
 
@@ -856,3 +967,314 @@ The files changed this week, all in \texttt{week-04/solution/} (\texttt{base/} i
     \item \texttt{kernel/mpu.c}: \texttt{mpu\_init}, \texttt{mpu\_set\_task\_region}; \texttt{kernel/faults.c}: \texttt{MemManage\_Handler}.
     \item \texttt{lib/syscalls.s}, \texttt{syscalls.h}: \texttt{sys\_exit}, \texttt{task\_exit}, service numbers 4 and 5; \texttt{src/main.c}, \texttt{task\_a.c}, \texttt{task\_b.c}; \texttt{Makefile}: the \texttt{DEMO} switch.
 \end{itemize}
+
+
+\section{A prova di coglione}
+
+\subsection{Unità 1}
+\paragraph*{I compiti del Sistema Operativo}
+La memoria è una risorsa condivisa. Un sistema operativo completo deve gestire quattro aspetti fondamentali:
+\begin{itemize}
+    \item \textbf{Collocazione (Placement):} assegnare indirizzi distinti a codice, dati e stack di ogni programma per evitare sovrapposizioni e corruzione dei dati.
+    \item \textbf{Condivisione (Sharing):} permettere l'uso comune e sicuro di risorse (es. librerie, buffer hardware, aree di scambio dati tra processi).
+    \item \textbf{Protezione (Protection):} impedire l'accesso accidentale o intenzionale alla memoria di altri task.
+    \item \textbf{Espansione (Memoria Virtuale):} simulare una quantità di memoria superiore alla RAM fisica, appoggiandosi a memorie di massa.
+\end{itemize}
+Il codice di partenza del corso implementa esclusivamente una collocazione di base, e in modo parziale.
+
+\paragraph*{Limiti del codice di partenza}
+Ispezionando i binari compilati, si nota che il linker alloca le variabili del kernel e dei task utente una dopo l'altra (regola generica \texttt{*(.bss*)}), senza alcun confine strutturale.
+\begin{itemize}
+    \item \textbf{Collocazione per variabile:} non esiste separazione tra i processi. Se un task calcola un puntatore errato, può sovrascrivere i dati di un altro task in totale trasparenza.
+    \item \textbf{Nessuna protezione hardware:} sebbene il sistema separi l'esecuzione temporale (un task inizia dopo la fine dell'altro) e usi una modalità non privilegiata per l'utente, quest'ultima blocca solo istruzioni critiche (es. registri di sistema). Non blocca i normali load/store in RAM. Di conseguenza, un \textbf{task malevolo} può accedere e alterare le variabili del kernel (es. il clock di sistema) causando malfunzionamenti globali silenziosi.
+\end{itemize}
+
+\paragraph*{Allocazione Statica vs Dinamica}
+La gestione degli indirizzi varia in base al momento in cui vengono assegnati:
+\begin{itemize}
+    \item \textbf{Statica (Link time):} dimensioni e indirizzi sono fissati prima dell'esecuzione. Non genera frammentazione ed è intrinsecamente prevedibile. È l'unica scelta adatta ai sistemi real-time rigidi (usata in questo corso).
+    \item \textbf{Dinamica (Run time):} gestita via \emph{heap} (es. \texttt{malloc}). È flessibile ma problematica in ambito embedded: genera \textbf{frammentazione esterna} (la memoria libera si divide in blocchi non contigui impedendo nuove allocazioni), i tempi di calcolo sono variabili e i fallimenti avvengono a run time.
+\end{itemize}
+
+\paragraph*{Lo spettro della Gestione della Memoria}
+L'evoluzione della gestione della memoria si basa su due pilastri hardware: la \textbf{traduzione} (alterazione dell'indirizzo in transito) e la \textbf{protezione} (blocco degli accessi).
+\begin{enumerate}
+    \item \textbf{Flat:} RAM condivisa, zero traduzione e zero protezione (stato iniziale del corso).
+    \item \textbf{Partizioni statiche:} RAM pre-divisa per task al link time (migliore collocazione, nessuna protezione hardware).
+    \item \textbf{MPU (Memory Protection Unit):} protezione hardware pura senza traduzione.
+    \item \textbf{MMU (Memory Management Unit):} paginazione, che offre traduzione hardware e protezione simultanea.
+    \item \textbf{Memoria Virtuale:} paginazione supportata da storage esterno (disco).
+\end{enumerate}
+
+\paragraph*{Paginazione, MMU e Traduzione a Due Livelli}
+Nei sistemi operativi complessi (es. Linux), i programmi operano su \textbf{Indirizzi Virtuali (VA)}, mentre l'hardware accede agli \textbf{Indirizzi Fisici (PA)}. Lo spazio è diviso in \textbf{Pagine} virtuali e \textbf{Frame} fisici di dimensioni identiche (es. 4 KiB).
+
+La \textbf{MMU} è il modulo hardware che traduce istantaneamente i VA in PA, scomponendo l'indirizzo: il numero della pagina viene tradotto nel corrispondente frame consultando una \emph{Page Table}, mentre l'offset (l'esatta posizione all'interno della pagina) rimane inalterato.
+
+Per ragioni di efficienza di spazio, non si usa un'unica gigantesca Page Table piatta (che occuperebbe svariati megabyte per processo anche per programmi minimi), ma una \textbf{traduzione a due livelli}. Una \emph{Page Directory} principale punta a tabelle di secondo livello che vengono create in RAM \emph{solo} per i segmenti di memoria effettivamente utilizzati dal processo.
+
+\paragraph*{TLB (Translation Lookaside Buffer) e Costi}
+Consultare tabelle in RAM per tradurre ogni singolo accesso renderebbe il sistema inusabile. La MMU integra quindi il \textbf{TLB}, una cache hardware ad altissima velocità che memorizza le traduzioni virtuale-fisico più recenti.
+\begin{itemize}
+    \item \textbf{Hit e Miss:} grazie al principio di \emph{località} (i programmi lavorano su porzioni di memoria concentrate come cicli array o stack), la quasi totalità degli accessi trova la traduzione nel TLB (Hit). In caso di assenza (Miss), la MMU deve leggere le tabelle in RAM, moltiplicando i tempi di esecuzione.
+    \item \textbf{Jitter da Context Switch:} cambiando processo, il sistema operativo deve invalidare (flush) il TLB per evitare accessi illeciti a frame del processo precedente. I primi accessi del nuovo processo saranno lenti (Miss), introducendo fluttuazioni nei tempi di esecuzione (\emph{jitter}), inaccettabili in sistemi real-time critici.
+\end{itemize}
+
+\paragraph*{Page Fault e Memoria Virtuale}
+Se la MMU non trova una mappatura valida o rileva una violazione dei permessi (es. scrittura su memoria in sola lettura), genera un'eccezione hardware detta \textbf{Page Fault}.
+\begin{itemize}
+    \item Se l'accesso è illecito, il processo viene abbattuto.
+    \item Se l'accesso è valido ma la pagina si trova sul disco, l'OS sospende il processo, trasferisce la pagina in un frame libero della RAM, aggiorna le tabelle hardware e \textbf{riesegue l'istruzione interrotta} in modo del tutto trasparente.
+\end{itemize}
+La memoria virtuale offre un \textbf{isolamento ermetico} tra i task e la capacità di usare enormi quantità di memoria appoggiandosi al disco. Il compromesso è una temporanea latenza catastrofica (misurata in millisecondi anziché nanosecondi) incompatibile con lo sviluppo di sistemi microcontrollori embedded.
+
+\paragraph*{MPU vs MMU nei Microcontrollori}
+A differenza dei processori applicativi (Cortex-A), i microcontrollori (Cortex-M) sono sprovvisti di MMU e disco. Adottano invece una \textbf{MPU}.
+\begin{itemize}
+    \item \textbf{Funzionamento:} la MPU non effettua traduzioni. Lavora su indirizzi fisici assoluti controllando se il task in esecuzione ha i permessi (lettura, scrittura, esecuzione) per accedere alla specifica regione di memoria richiesta.
+    \item \textbf{Vantaggi:} richiede hardware minimale (pochi registri invece di walker di tabelle e cache), ha bassi consumi e, soprattutto, offre una \textbf{latenza rigorosamente deterministica} in quanto priva della variabilità dei TLB Miss.
+\end{itemize}
+
+\paragraph*{Responsabilità del Kernel (Il problema del puntatore errato)}
+L'attivazione della MPU limita le operazioni utente, ma non rende il sistema invulnerabile. Se un processo utente passa un puntatore che punta alla memoria privata del kernel a una \emph{System Call}, l'operazione andrà a buon fine. 
+Questo accade perché la system call viene eseguita in \textbf{modalità privilegiata}, la quale bypassa le restrizioni MPU imposte al task. \textbf{Lezione fondamentale:} l'hardware blocca le esecuzioni utente malevole dirette, ma spetta \emph{esclusivamente} al kernel il dovere di validare sistematicamente i puntatori e i parametri forniti dall'utente prima di processarli.
+
+
+\subsection{Unità 2}
+Nell'Unità 1 i task condividevano la RAM e il task \emph{rogue} poteva corrompere una variabile del kernel. L'Unità 2 fa il primo passo verso la soluzione: dare a ogni task una propria fetta di RAM, la \textbf{partizione}, e preparare tutto ciò che serve perché giri lì dentro. È \emph{organizzazione} della memoria, non ancora \emph{protezione}.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{contents/images/week-04/rogue_task.png}
+    \caption{Importanza di proteggere la memoria -> accesso non autorizzato}
+\end{figure}
+
+\paragraph*{L'idea: una fetta di RAM per ogni task}
+Una partizione contiene solo stack e variabili di un task; la FLASH conserva codice, dati in sola lettura e valori iniziali delle variabili. Cinque regole, ognuna con la sua ragione:
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{contents/images/week-04/Task_partitions_in_RAM.png}
+    \caption{Come la memoria viene divisa staticamente (IMPORTANTE: ancora vulnerabile a run-time)}
+\end{figure}
+
+\begin{itemize}
+    \item \textbf{Fisse}: le decide il linker (allocazione statica dell'Unità 1); nessun task viene creato, ingrandito o spostato a run time.
+    \item \textbf{4~KB allineate a 4~KB}: dimensione potenza di due e inizio multiplo di 4096 sono la forma che la MPU dell'Unità 3 sa proteggere; il prezzo è lo spreco (un task da 1,1~KB occupa comunque 4~KB).
+    \item \textbf{Solo RAM}: codice e dati read-only restano in FLASH, \emph{condivisi} da kernel e task (una sola copia di \texttt{printf} per tutti).
+    \item \textbf{Stack in fondo}: lo stack cresce verso il basso, quindi un overflow esce subito dalla partizione e l'Unità 3 potrà farlo scattare come fault; in cima, invece, sovrascriverebbe in silenzio le variabili del task, e nessuna protezione hardware distinguerebbe quella scrittura da una legittima.
+    \item \textbf{Al kernel il resto}: i suoi \texttt{.data} e \texttt{.bss} seguono le partizioni e il suo stack resta in cima alla RAM.
+\end{itemize}
+
+\paragraph*{Il linker costruisce le partizioni}
+Il linker usa pochi concetti. Ogni sezione ha un indirizzo di \textbf{esecuzione} (VMA), dove il codice la usa, e uno di \textbf{caricamento} (LMA), dove i suoi byte sono salvati nell'immagine. Per i dati differiscono: le variabili \emph{vivono} in RAM, ma i valori iniziali sono \emph{salvati} in FLASH, che li conserva senza alimentazione (\texttt{> RAM AT > FLASH}, come per il \texttt{.data} della Settimana 2), e qualcuno deve copiarli: il \texttt{Reset\_Handler} per il kernel, il kernel stesso per le partizioni.
+
+\texttt{NOLOAD} riserva indirizzi senza salvare nulla (stack e padding); \texttt{ALIGN} arrotonda per eccesso a un multiplo di 4~KB; assegnare il \emph{location counter} permette di saltare a fine partizione; un pattern come \texttt{*task\_a.o(\dots)} preleva le variabili di un solo file oggetto, senza marcare il sorgente. Anche \texttt{.bss} entra nella stessa sezione dei dati, così i suoi zeri sono in FLASH e un solo ciclo di copia inizializza tutto. Vale infine il \textbf{primo match}: le regole delle partizioni vanno prima di quelle generiche del kernel, altrimenti le variabili dei task resterebbero nella RAM del kernel.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{contents/images/week-04/fake_stack.png}
+    \caption{Importanza di uno stack alla fine di ogni partizione -> Silent Corruption}
+\end{figure}
+
+Nello script si definisce la dimensione della partizione, si elimina la vecchia sezione piatta degli stack e si inserisce, prima di \texttt{.data}, il blocco di A seguito da quello di B. Ogni blocco ha tre sezioni: \textbf{stack} (parte dal primo confine da 4~KB, riserva 1~KB e ne segna la cima), \textbf{dati} (le variabili del file del task, con estremi allineati alla word perché la copia procede per word da 32 bit) e \textbf{padding} (porta il location counter a fine partizione, così la successiva parte dopo i 4~KB completi). Per A l'allineamento parte dall'inizio della RAM, perché dopo \texttt{.text} il location counter è ancora in FLASH. I sei simboli per task già usati dal kernel vengono solo \emph{ri-puntati}, e due \texttt{ASSERT} fanno fallire il link se i dati di un task non stanno nella sua partizione.
+Con \texttt{nm} si verifica il risultato: due blocchi consecutivi da 4~KB allineati, con lo stack nel primo KB, e i dati del kernel spostati dopo di essi. La cima dello stack coincide con l'indirizzo della prima variabile senza sovrapporsi: è un limite \emph{esclusivo}, perché lo stack del Cortex-M è \emph{full descending} (un push prima decrementa \texttt{sp}, poi scrive). Il map file conferma il primo match.
+
+\paragraph*{Inizializzare le variabili dei task}
+Il linker decide dove stanno le variabili, ma non dà loro un valore: girano in RAM e nascono in FLASH. Per questo \texttt{partition\_init} le copia, una word alla volta, prima della prima esecuzione di ogni task: è lo stesso ciclo con cui il \texttt{Reset\_Handler} inizializza i dati del kernel, lanciato da \texttt{task\_launch} una volta per task. Una \texttt{struct task} raccoglie ciò che il kernel sa di ogni task (nome, funzione d'ingresso, stack, confini della partizione, indirizzi dei dati) ed è riempita con i simboli del linker, dichiarati come array perché conta solo il loro indirizzo. Per \texttt{.bss} non serve azzerare nulla: gli zeri sono già nella sezione caricata. Nella versione di base il ciclo non copiava niente, così il codice preparato girava subito.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{contents/images/week-04/partition_init.png}
+    \caption{Partition Init}
+\end{figure}
+
+\paragraph*{Due stack, due livelli di privilegio}
+Il passo successivo è separare stack e privilegi. Il Cortex-M3 ha due stack pointer, e \texttt{sp} è quello in uso. \textbf{MSP} (main) è sempre usato in \emph{handler mode}, e in thread mode dopo il reset: è lo stack del kernel, in cima alla RAM. \textbf{PSP} (process) è usato in thread mode quando il bit SPSEL di CONTROL vale 1: ogni task ha il suo stack PSP \emph{dentro} la propria partizione. Se nPRIV vale 1 il thread mode è non privilegiato, quindi un task gira con \textbf{CONTROL = 3}. Lo stack deve stare nella partizione perché contiene variabili locali, indirizzi di ritorno e frame delle eccezioni: altrimenti non si potrebbe confinare il task nei suoi 4~KB senza togliergli lo stack. 
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{contents/images/week-04/MSP_vs_PSP_2.png}
+    \caption{MSP \& PSP - Exception Return}
+\end{figure}
+
+E poiché l'handler mode usa sempre MSP, il lavoro del kernel non passa mai dallo stack di un task. Il ponte tra i due mondi è \textbf{EXC\_RETURN}, il valore in \texttt{lr} che chiude un'eccezione: \texttt{0xFFFFFFF9} torna in thread mode su MSP, \texttt{0xFFFFFFFD} su PSP. All'ingresso in un'eccezione l'hardware ne mette uno in \texttt{lr}, e il suo bit 2 indica dove sta il frame salvato (1 = PSP, 0 = MSP).
+
+\paragraph*{Avviare un task: il frame finto}
+Resta da far partire un task. Il kernel opera in handler mode, su MSP e con tutti i privilegi: una normale chiamata di funzione farebbe ereditare questo stato al task, e un suo bug potrebbe corrompere il kernel. Il task deve invece girare in thread mode, non privilegiato e su PSP. Ma nessuna istruzione cambia insieme stack, privilegi, modalità e indirizzo: solo l'\textbf{exception return} compie questo ``triplo salto'' in modo sicuro e atomico. Un task appena creato, però, non è mai stato interrotto: il kernel \emph{finge} allora il passato, costruendo sul suo stack un frame di 8 word (32 byte) identico a quello che l'hardware si aspetta, puntando il PSP a quel frame e ordinando il ritorno con \texttt{0xFFFFFFFD}. La CPU non si accorge dell'inganno: ripristina i registri, abbassa i privilegi, passa in thread mode e salta all'indirizzo iniziale del task.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{contents/images/week-04/task_lifestyle.png}
+    \caption{Ciclo di vita di un task (gestito dal OS)}
+\end{figure}
+
+La sequenza parte da \texttt{main} con la system call di avvio; l'handler intercetta la chiamata e fa partire \texttt{task\_launch}, che compie tre operazioni. Prima la \emph{preparazione}: registra quale task parte, predispone la MPU a proteggerne la partizione e chiama \texttt{partition\_init}. Poi costruisce il \emph{frame} sotto la cima dello stack: \texttt{r0--r3} e \texttt{r12} a zero, \texttt{lr} = \texttt{task\_exit} (se la funzione del task ritorna, il task esce in modo pulito invece di andare in crash), \texttt{pc} = punto d'ingresso, \texttt{xPSR} con il bit Thumb, obbligatorio sul Cortex-M (senza, scatta una \texttt{UsageFault}). Infine il \emph{cambio di contesto}, in assembly: carica il frame nel PSP, attiva nPRIV in CONTROL e forza il ritorno di \texttt{0xFFFFFFFD}. L'hardware estrae i 32 byte e il task parte non privilegiato, con il PSP, liberato dal frame, esattamente in cima allo stack.
+
+\paragraph*{System call e fine di un task}
+Ora una \texttt{svc} può arrivare da due ambienti: da \texttt{main}, una sola volta per avviare il sistema (su MSP), e dai task, per le chiamate ordinarie (su PSP). L'\texttt{SVC\_Handler} deve quindi scoprire dove sta il frame, e lo fa leggendo il bit 2 dell'EXC\_RETURN in \texttt{lr}: 0 = MSP, 1 = PSP. In assembly sceglie lo stack giusto e chiama la funzione C \texttt{svc\_dispatch}, passandole frame ed EXC\_RETURN; il valore restituito è un nuovo EXC\_RETURN, con cui l'assembly esce dall'eccezione. Prima l'handler tornava sempre al punto di chiamata; ora è \texttt{svc\_dispatch} a decidere \emph{dove tornare}. Con \texttt{SYS\_START\_TASKS} restituisce il codice per lanciare il primo task (\texttt{task\_start\_first}); con \texttt{SYS\_EXIT} quello per lanciare il successivo o tornare a \texttt{main} (\texttt{task\_exit\_current}); per le chiamate normali scrive il risultato in \texttt{frame[0]} (che diventa \texttt{r0} del task) e restituisce l'EXC\_RETURN originale, così l'esecuzione riprende da dove si era interrotta. È la regola d'oro: \textbf{il kernel non aspetta mai dentro un handler}; ogni system call finisce subito e guida la CPU verso ciò che deve girare dopo.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{contents/images/week-04/dispatcher.png}
+    \caption{Opzioni di un dispatcher}
+\end{figure}
+
+Un task può terminare chiamando \texttt{sys\_exit()}, uno stub che non ritorna mai, oppure semplicemente ritornando dalla sua funzione: atterra così in \texttt{task\_exit}, l'indirizzo che \texttt{task\_launch} ha messo nel \texttt{lr} del frame finto, che a sua volta chiama \texttt{sys\_exit}. Il Task A usa questa seconda strada. Il frame finto, quindi, non solo avvia il task ma ne prepara anche l'uscita; il lato kernel si vedrà nell'Unità 3.
+
+\paragraph*{Verifiche e limite delle partizioni}
+Con \texttt{gdb} si controlla la catena: in entrambi i task \textbf{CONTROL = 3}; il \textbf{PSP} coincide con la cima dello stack, dentro la partizione del task; il frame mostra \texttt{lr} = \texttt{task\_exit} (più il bit Thumb), \texttt{pc} = funzione del task e \texttt{xPSR} con il bit Thumb; l'\textbf{MSP} è lo stesso nei due casi, perché contiene il frame di \texttt{main} in attesa e i task non lo toccano mai.
+
+Eppure, rieseguendo la demo \emph{rogue}, il Task B scrive ancora nella variabile del kernel (ora spostata, fuori dalla sua partizione) e l'orologio viene corrotto \emph{esattamente come nell'Unità 1}. Il linker decide solo \emph{dove} stanno le cose: una scrittura è una scrittura ordinaria e, a run time, nulla la confronta con i confini della partizione. Le partizioni \emph{dispongono} la memoria ma non \emph{impongono} nulla. È cambiata però la forma: la memoria di ogni task è ora un blocco unico da 4~KB allineato, quindi basta \emph{una} regola hardware per task per descrivere ciò che può toccare. Quella regola è la MPU, oggetto dell'Unità 3.
+
+\paragraph*{In breve}
+Partizioni fisse da 4~KB allineate, con lo stack in fondo e il codice condiviso in FLASH $\rightarrow$ costruite dal linker (\texttt{ALIGN}, \texttt{NOLOAD}, \texttt{AT > FLASH}, pattern per file, primo match, \texttt{ASSERT}) $\rightarrow$ riempite da \texttt{partition\_init} $\rightarrow$ eseguite in modo non privilegiato su PSP, con il kernel su MSP $\rightarrow$ avviate da \texttt{task\_launch} con un frame finto e \texttt{0xFFFFFFFD} $\rightarrow$ gestite nelle system call da \texttt{SVC\_Handler} e \texttt{svc\_dispatch} $\rightarrow$ chiuse da \texttt{task\_exit}. La memoria è ora \emph{organizzata}, ma non ancora \emph{difesa}: per farla rispettare serve la MPU dell'Unità 3.
+
+
+\subsection{Unità 3}
+L'obiettivo è impedire \textbf{via hardware} che un task esca dai propri confini. L'Unità~1 aveva
+introdotto la MPU come lista di regioni controllate a ogni accesso e l'Unità~2 aveva preparato la
+memoria (una partizione da 4~KB, allineata, per ogni task): ora si programma la MPU perché ogni
+task veda solo la FLASH e la propria partizione, e si osserva cosa accade quando prova a uscirne.
+
+\paragraph*{Come ragiona la MPU.}
+Il Cortex-M3 ha \textbf{8 regioni}; ognuna ha \textbf{base}, \textbf{dimensione} e
+\textbf{permessi} e vale solo se il suo bit ENABLE è attivo. La dimensione è una potenza di 2
+tra 32~byte e 4~GB e la base deve essere un \textbf{multiplo della dimensione}: per questo
+l'Unità~2 ha reso le partizioni di 4~KB e allineate a 4~KB, così che \emph{una regione copra
+esattamente una partizione}. Il controllo vale per il codice \textbf{non privilegiato} (i task):
+un accesso fuori da ogni regione attiva, o vietato dalla regione, viene \textbf{bloccato} e la
+CPU solleva un fault MemManage. Per il codice \textbf{privilegiato} (il kernel), il bit
+PRIVDEFENA decide se, dove nessuna regione corrisponde, valga la stessa regola o la mappa di
+memoria predefinita della scheda. La MPU è una periferica del core scrivibile solo in modo
+privilegiato, quindi un task non può spegnerla.
+
+\paragraph*{I permessi.}
+Il campo \textbf{AP} (3 bit) assegna diritti distinti al codice privilegiato e a quello non
+privilegiato: qui servono lettura/scrittura per entrambi sulla partizione del task in esecuzione
+e sola lettura sulla FLASH. Il bit \textbf{XN} (\emph{execute never}) vieta il \emph{fetch} di
+istruzioni, mentre letture e scritture seguono AP: le partizioni contengono solo dati e stack,
+quindi sono XN, e un task non può eseguire codice che ha scritto lui stesso in RAM, chiudendo un
+attacco classico. Con \textbf{PRIVDEFENA}=1 il kernel conserva l'accesso a tutta la RAM e alle
+periferiche senza una regione per ciascuna (con 0 sarebbe limitato anche lui): si sceglie 1
+perché il kernel è fidato e lo scopo della MPU è \emph{contenere i task}.
+
+\paragraph*{Registri e calcolo dei campi.}
+Si usano cinque registri: \texttt{MPU\_TYPE} (numero di regioni, sola lettura),
+\texttt{MPU\_CTRL} (ENABLE e PRIVDEFENA), \texttt{MPU\_RNR} (regione corrente),
+\texttt{MPU\_RBAR} (base) e \texttt{MPU\_RASR} (XN, AP, S/C/B, SIZE, ENABLE). C'è una sola coppia
+RBAR/RASR per tutte le regioni e RNR sceglie a quale si riferisce; scrivendo RBAR con il bit
+VALID si imposta anche il numero di regione, e una scrittura ne sostituisce due. Il campo SIZE
+contiene $\log_2(\mathrm{dimensione})-1$ (il $-1$ fa arrivare 5~bit fino a 4~GB): vale 11 per
+4~KB e 21 per 4~MB. S, C e B (tipo di memoria per cache e multi-core) qui non contano, perché
+non c'è cache; TEX e SRD restano a 0. Gli esercizi fissano le regole: una regione da 32~KB ha
+SIZE=14 e parte da un multiplo di 32~KB (non di 4~KB); un task da 5~KB richiede 8~KB, la potenza
+di 2 successiva, con 3~KB sprecati come nelle partizioni dell'Unità~2.
+
+\paragraph*{Le due regioni di questa unità.}
+Il disegno è volutamente minimo. La \textbf{Regione~0} copre la FLASH (4~MB, sola lettura,
+eseguibile) ed è uguale per tutti i task: codice e costanti stringa. La \textbf{Regione~1} copre
+la partizione del task in esecuzione \emph{adesso} (lettura/scrittura, XN) e il kernel la sposta
+a ogni avvio di task. Tutto il resto (l'altra partizione, dati e stack del kernel, le
+periferiche) non ha regione: per un task ogni accesso lì è un fault. Lo ``stato MPU'' di un task
+si riduce così a un solo valore, la base della Regione~1.
+
+\paragraph*{Programmare la MPU.}
+Due funzioni, già richiamate nei punti giusti ma vuote nella base (MPU spenta):
+\begin{itemize}
+  \item \texttt{mpu\_init}, chiamata una volta da \texttt{main} prima di avviare i task,
+    programma la Regione~0 e abilita la MPU (ENABLE e PRIVDEFENA); dopo il reset la MPU è spenta
+    e nessuna regola vale finché ENABLE non è impostato. La Regione~1 non c'è ancora, ma non è
+    un problema: \texttt{main} e il kernel sono privilegiati e, grazie a PRIVDEFENA, usano la
+    mappa predefinita, e nessun task parte prima che \texttt{task\_launch} la imposti.
+  \item \texttt{mpu\_set\_task\_region}, chiamata da \texttt{task\_launch} prima di entrare in
+    ogni task, riceve base e dimensione della partizione, ne ricava SIZE (il logaritmo di una
+    potenza di 2 è il numero dei suoi zeri finali, che GCC conta con \texttt{\_\_builtin\_ctz})
+    e sposta la Regione~1 (lettura/scrittura, XN); il linker script garantisce potenza di 2 e
+    allineamento.
+\end{itemize}
+Dopo le scritture ai registri MPU si usano \texttt{dsb} (attende che siano concluse) e
+\texttt{isb} (le istruzioni successive vedono le nuove impostazioni), così nessun accesso è
+controllato con le vecchie regioni; con le macro di \texttt{cmsdk.h} il codice resta leggibile e
+\texttt{make} compila senza warning.
+
+\paragraph*{Quando la MPU dice no: il MemManage fault.}
+Un accesso rifiutato \textbf{non avviene} (una store non scrive, una load non legge) e la CPU
+solleva MemManage, l'eccezione 4, abilitata al boot con MEMFAULTENA in SHCSR (Settimana~2) e
+servita da \texttt{MemManage\_Handler}, che gira privilegiato sull'MSP. Il byte basso di
+\textbf{CFSR} ne indica la causa: \texttt{IACCVIOL} (fetch rifiutato, ad esempio da una regione
+XN), \texttt{DACCVIOL} (load o store rifiutata), \texttt{MSTKERR} (salvataggio del frame di
+8 word all'ingresso di un'eccezione rifiutato), \texttt{MUNSTKERR} (ripristino all'uscita
+rifiutato) e \texttt{MMARVALID}, che segnala che \textbf{MMFAR} contiene l'indirizzo rifiutato.
+MMFAR va letto solo se MMARVALID vale~1: con un fault di fetch o di stacking la CPU non lo
+scrive e può contenere un valore vecchio. L'handler legge CFSR una sola volta, stampa
+l'indirizzo solo se valido e controlla ogni causa con un \texttt{if} separato, perché più bit
+possono essere attivi insieme (\texttt{kprintf} funziona perché l'handler è privilegiato).
+
+\paragraph*{La protezione in azione.}
+Con la MPU attiva, tre scenari:
+\begin{itemize}
+  \item \textbf{Esecuzione normale} (\texttt{make run}). Output identico a quello dell'Unità~1,
+    ma sotto controllo hardware: A e B usano solo FLASH e la propria partizione. Nelle system
+    call la CPU passa in Handler mode, dove il kernel, privilegiato, non è vincolato dalle
+    regioni dei task; al cambio da A a B si aggiorna solo la Regione~1.
+  \item \textbf{Task ``rogue''} (\texttt{DEMO=rogue}). B tenta di sovrascrivere una variabile
+    del kernel (il contatore dell'uptime): la store non viene mai eseguita e il MemManage
+    riporta DACCVIOL con MMARVALID e l'indirizzo esatto della variabile. L'orologio resta
+    intatto e il bug è colto proprio all'istruzione colpevole.
+  \item \textbf{Stack overflow} (\texttt{DEMO=overflow}). B va in ricorsione profonda (4~KB di
+    stack richiesti, 1~KB disponibile) e supera il limite inferiore dello stack: l'indirizzo
+    guasto cade appena sotto la sua partizione, nel territorio di A e fuori dalla Regione~1
+    (DACCVIOL). Compare anche MSTKERR: per gestire il fault la CPU deve salvare il frame sullo
+    stack attivo (PSP), già fuori limite, e anche questo salvataggio viene bloccato. Ecco perché
+    l'Unità~2 aveva messo lo stack \emph{in fondo} alla partizione: appena trabocca, esce dalla
+    regione consentita e scatta il fault, mentre senza MPU avrebbe corrotto in silenzio i dati
+    di A, con un crash lontano dall'errore originario.
+\end{itemize}
+
+\paragraph*{Ciò che la MPU non vede: i puntatori passati al kernel.}
+Il caso \texttt{badptr} sfugge alla MPU. In una system call come \texttt{sys\_write} la CPU è
+privilegiata dentro \texttt{SVC\_Handler} e, proprio perché il kernel è fidato, può accedere
+ovunque: se un task gli passa un puntatore a memoria privata del kernel, il kernel lo segue
+ciecamente per suo conto, rivelando o corrompendo dati. Deve quindi verificare che ogni
+puntatore punti \emph{interamente} a memoria accessibile al task: per \texttt{sys\_write}, il
+buffer deve stare nella partizione RAM del chiamante o nella FLASH (dove stanno le stringhe
+costanti). Il controllo \texttt{in\_range} va scritto con cura: il test ingenuo ``base più
+lunghezza $\le$ fine'' è una falla, perché la somma può andare in wrap-around modulo $2^{32}$ e
+risultare piccola, facendo passare una lunghezza enorme e lasciando leggere quasi tutta la RAM.
+La versione sicura controlla che la base sia nell'intervallo e poi confronta la lunghezza con lo
+spazio rimasto, senza mai sommare. In \texttt{sys\_write\_impl} il kernel identifica il
+chiamante con \texttt{task\_current()} (0 se chiama il kernel stesso, fidato) e rifiuta i buffer
+fuori dalle due zone: con \texttt{DEMO=badptr}, \texttt{sys\_write} restituisce $-1$ prima di
+toccare l'UART, nessun dato esce e B prosegue, perché una syscall rifiutata è un normale errore
+gestibile dal task, non un fault hardware. In sintesi, la \textbf{MPU} ferma ciò che un task fa
+\emph{direttamente}, i \textbf{controlli del kernel} ciò che un task \emph{chiede al kernel} di
+fare: servono entrambi.
+
+\paragraph*{La fine di un task.}
+Al termine, un task torna a uno stub che chiama \texttt{SYS\_EXIT}; il dispatcher invoca
+\texttt{task\_exit\_current}, che avvia il task successivo o, se non ce ne sono, riporta l'OS a
+\texttt{main}. Da A a B, \texttt{task\_launch} sposta la Regione~1 sulla partizione di B (quella
+di A diventa inaccessibile) e il ritorno dall'eccezione carica il frame finto preparato per B,
+avviandolo sul PSP. Se terminasse l'ultimo task, il kernel segna che non ce ne sono più, azzera
+\texttt{nPRIV} in \texttt{CONTROL} per riprendere i privilegi e ritorna in Thread mode sull'MSP,
+riprendendo \texttt{main} dove si era fermato: è essenziale, perché \texttt{main} gira in Thread
+mode e, se restasse non privilegiato, causerebbe un fault già al primo accesso all'UART per il
+messaggio finale (che qui non si vede mai, perché B non termina).
+
+\paragraph*{Il quadro finale.}
+Per i task che esegue, il kernel svolge ora i quattro compiti della settimana:
+\begin{itemize}
+  \item \textbf{Collocazione:} partizione fissa da 4~KB per task, costruita dal linker (stack in
+    fondo, variabili sopra); codice e costanti condivisi in FLASH.
+  \item \textbf{Stack separati:} task non privilegiati sul PSP, nella propria partizione; kernel
+    sull'MSP; \texttt{task\_launch} entra in un task con un ritorno da eccezione e
+    \texttt{task\_exit\_current} lo conclude e avvia il successivo.
+  \item \textbf{Protezione hardware:} la MPU concede a un task solo la FLASH (lettura ed
+    esecuzione) e la propria partizione (lettura/scrittura, senza esecuzione); ogni accesso
+    rifiutato genera un MemManage con causa e indirizzo esatto.
+  \item \textbf{Protezione software:} \texttt{sys\_write} rifiuta ogni buffer che il task non
+    potrebbe leggere da solo, con un \texttt{in\_range} a prova di overflow.
+\end{itemize}
+Un programma corretto stampa esattamente come nell'Unità~1: è cambiato ciò che può fare uno
+\textbf{sbagliato}.
