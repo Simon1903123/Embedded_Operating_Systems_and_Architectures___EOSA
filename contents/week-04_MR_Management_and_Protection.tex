@@ -674,6 +674,11 @@ The \textbf{SIZE} field (5 bits) holds $\log_2(\text{size}) - 1$, so a region ha
     \item \textbf{Everything else} has \textbf{no region} for unprivileged code: the other task's partition, kernel data and stack, every peripheral. Any access by a task there causes a fault.
 \end{itemize}
 
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{contents/images/week-04/Part0_Part1.png}
+\end{figure}
+
 The ``MPU state'' of a task is therefore just one value: the base address of Region 1.
 
 \subsection{Computing SIZE, RBAR and RASR}
@@ -689,23 +694,17 @@ The ``MPU state'' of a task is therefore just one value: the base address of Reg
 
 \textbf{RASR} of Region 1 for Task B is \texttt{0x13060017}:
 
-\begin{center}
-\begin{tabular}{|l|l|l|p{5.2cm}|}
-\hline
-\textbf{Bits} & \textbf{Field} & \textbf{Value} & \textbf{Meaning} \\
-\hline
-28 & XN & 1 & no instruction fetch (\texttt{0x10000000}) \\
-\hline
-26:24 & AP & \texttt{011} & read/write for both (\texttt{0x03000000}) \\
-\hline
-18, 17 & S, C & 1, 1 & shareable, cacheable (\texttt{0x00060000}) \\
-\hline
-5:1 & SIZE & 11 & $2^{12}$ = 4 KB (\texttt{0x16}) \\
-\hline
-0 & ENABLE & 1 & region on (\texttt{0x01}) \\
-\hline
-\end{tabular}
-\end{center}
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{contents/images/week-04/MPU_RASR.png}
+    \caption{RASR Field}
+\end{figure}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{contents/images/week-04/MPU_CONTROL.png}
+    \caption{CTRL Field}
+\end{figure}
 
 The sum is \texttt{0x10000000 + 0x03000000 + 0x00060000 + 0x16 + 0x01 = 0x13060017}. Region 0 is built the same way, from AP \texttt{110} (\texttt{0x06000000}), C (\texttt{0x00020000}) and \texttt{0x2B}, without XN: \texttt{0x0602002B}.
 
@@ -1278,3 +1277,122 @@ Per i task che esegue, il kernel svolge ora i quattro compiti della settimana:
 \end{itemize}
 Un programma corretto stampa esattamente come nell'Unità~1: è cambiato ciò che può fare uno
 \textbf{sbagliato}.
+
+
+\subsubsection{Master Cheat Sheet: Unità 3, MPU Cortex-M3}
+
+\paragraph*{1. La Mappa delle Regioni}
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{|l|p{3.5cm}|l|l|l|l|p{4.5cm}|}
+\hline
+\textbf{Regione} & \textbf{Target} & \textbf{Base} & \textbf{Size} & \textbf{AP} & \textbf{XN} & \textbf{Scopo} \\
+\hline
+\textbf{0} & \textbf{FLASH}: codice + costanti stringa, identica per ogni task & \texttt{0x00000000} & \textbf{4 MB} = $2^{22}$ (\texttt{SIZE}=21) & \texttt{110} = \texttt{MPU\_AP\_RO} (priv RO / unpriv RO) & \textbf{0} (eseguibile) & Lettura ed esecuzione di codice e costanti; fissa, programmata una sola volta in \texttt{mpu\_init()} \\
+\hline
+\textbf{1} & \textbf{Partizione del task in esecuzione ora}: variabili, stack, buffer locali & \texttt{part\_start}: Task A \texttt{0x20000000}, Task B \texttt{0x20001000} & \textbf{4 KB} = $2^{12}$ (\texttt{SIZE}=11) & \texttt{011} = \texttt{MPU\_AP\_FULL\_RW} (RW / RW) & \textbf{1} (no instruction fetch) & Isola il task nella propria partizione; XN impedisce di eseguire codice scritto in RAM. Mobile: \texttt{mpu\_set\_task\_region()} la sposta a ogni avvio di task \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{itemize}
+    \item \textbf{Tutto il resto} (partizione dell'altro task, dati e stack del kernel, periferiche): nessuna regione $\rightarrow$ ogni accesso unprivileged causa \texttt{MemManage}.
+    \item \textbf{Codifiche AP} (priv / unpriv): \texttt{000} no/no $\cdot$ \texttt{001} RW/no $\cdot$ \texttt{010} RW/RO $\cdot$ \texttt{011} RW/RW $\cdot$ \texttt{110} RO/RO.
+\end{itemize}
+
+\paragraph*{2. I Registri MPU}
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{|l|l|p{4cm}|p{6.5cm}|}
+\hline
+\textbf{Registro} & \textbf{Indirizzo} & \textbf{Bit chiave configurati} & \textbf{Matematica / valore scritto} \\
+\hline
+\texttt{MPU\_TYPE} & \texttt{0xE000ED90} & bit 15:8 = n° di regioni (sola lettura) & Legge \texttt{0x800} $\rightarrow$ \textbf{8 regioni} (0--7) \\
+\hline
+\texttt{MPU\_CTRL} & \texttt{0xE000ED94} & bit 0 \texttt{ENABLE}; bit 2 \texttt{PRIVDEFENA} & \texttt{ENABLE} (1) + \texttt{PRIVDEFENA} (4) = \textbf{5}. Senza \texttt{ENABLE} nessuna protezione (MPU spenta dopo il reset). \texttt{PRIVDEFENA}=1: accessi privilegiati fuori regione $\rightarrow$ mappa di default (kernel libero, l'MPU contiene solo i task); con 0 anche il kernel sarebbe limitato alle regioni \\
+\hline
+\texttt{MPU\_RNR} & \texttt{0xE000ED98} & n° della regione corrente & Una sola coppia \texttt{RBAR}/\texttt{RASR} per tutte le regioni: \texttt{RNR} sceglie quale. Scorciatoia usata nel codice: \texttt{RBAR} con \texttt{VALID} imposta \texttt{RNR} dal campo \texttt{REGION} \\
+\hline
+\texttt{MPU\_RBAR} & \texttt{0xE000ED9C} & bit 31:5 base; bit 4 \texttt{VALID}; bit 3:0 \texttt{REGION} & \texttt{RBAR} = base + \texttt{0x10} + n° regione $\rightarrow$ R0: \texttt{0x00000010}; R1 Task A: \texttt{0x20000011}; R1 Task B: \texttt{0x20001011}. Base allineata alla size $\rightarrow$ 5 bit bassi a 0, liberi per \texttt{VALID} e \texttt{REGION} \\
+\hline
+\texttt{MPU\_RASR} & \texttt{0xE000EDA0} & bit 28 \texttt{XN}; bit 26:24 \texttt{AP}; bit 18:16 \texttt{S},\texttt{C},\texttt{B}; bit 5:1 \texttt{SIZE}; bit 0 \texttt{ENABLE} (regione attiva) & \texttt{RASR} = \texttt{XN} + \texttt{AP} + \texttt{S}/\texttt{C}/\texttt{B} + \texttt{SIZE}$\ll$1 + \texttt{ENABLE} $\rightarrow$ R0: \texttt{0x0602002B}; R1: \texttt{0x13060017}. \texttt{TEX}, \texttt{SRD} e \texttt{B} = 0 \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph*{Assemblaggio RASR (campi disgiunti: OR = somma)}
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{|l|l|l|l|}
+\hline
+\textbf{Campo} & \textbf{Bit} & \textbf{Region 0 (FLASH)} & \textbf{Region 1 (Partizione)} \\
+\hline
+\texttt{XN} & 28 & 0 & 1 $\rightarrow$ \texttt{0x10000000} \\
+\hline
+\texttt{AP} & 26:24 & \texttt{110} $\rightarrow$ \texttt{0x06000000} & \texttt{011} $\rightarrow$ \texttt{0x03000000} \\
+\hline
+\texttt{S} & 18 & 0 & 1 $\rightarrow$ \texttt{0x00040000} \\
+\hline
+\texttt{C} & 17 & 1 $\rightarrow$ \texttt{0x00020000} & 1 $\rightarrow$ \texttt{0x00020000} \\
+\hline
+\texttt{SIZE}$\ll$1 & 5:1 & 21 $\times$ 2 = \texttt{0x2A} & 11 $\times$ 2 = \texttt{0x16} \\
+\hline
+\texttt{ENABLE} & 0 & \texttt{0x01} & \texttt{0x01} \\
+\hline
+\textbf{\texttt{RASR}} & & \textbf{\texttt{0x0602002B}} & \textbf{\texttt{0x13060017}} \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph*{Formule SIZE e vincoli}
+
+\begin{itemize}
+    \item \textbf{\texttt{SIZE}}: $\log_2(\text{size}) - 1$; la regione occupa $2^{\texttt{SIZE}+1}$ byte. Nel registro si moltiplica per 2 (bit 5:1) e si somma \texttt{ENABLE} (+1).
+    \item \textbf{Esempi}: 4 KB $\rightarrow$ \texttt{SIZE}=11 $\rightarrow$ \texttt{0x16} $\rightarrow$ \texttt{0x17}; 4 MB $\rightarrow$ \texttt{SIZE}=21 $\rightarrow$ \texttt{0x2A} $\rightarrow$ \texttt{0x2B}; 32 KB $\rightarrow$ \texttt{SIZE}=14 $\rightarrow$ \texttt{0x1C} $\rightarrow$ \texttt{0x1D}.
+    \item \textbf{Vincoli}: size = potenza di 2, da 32 B a 4 GB; \texttt{base} multipla della size (32 KB: valide \texttt{0x20000000} e \texttt{0x20008000}, non \texttt{0x20001000}). Task da 5 KB $\rightarrow$ regione da 8 KB (potenza di 2 successiva).
+    \item \textbf{Helper}: \texttt{MPU\_RASR\_SIZE(n)} (\texttt{include/cmsdk.h}) = \texttt{((n) - 1) $\ll$ 1} con $n = \log_2(\text{size})$ (22 per 4 MB, 12 per 4 KB); \texttt{\_\_builtin\_ctz(size)} = $\log_2$ di una potenza di 2 (\texttt{4096} $\rightarrow$ 12).
+    \item \textbf{Accesso}: l'MPU è un core peripheral da \texttt{0xE000ED90}, scrivibile solo da codice privilegiato $\rightarrow$ un task non può spegnerla.
+    \item \textbf{\texttt{mpu\_init()}} (\texttt{kernel/mpu.c}, una volta da \texttt{main} prima di \texttt{svc \#5}): programma R0, \texttt{CTRL} = 5, poi \texttt{dsb} + \texttt{isb}. R1 non è ancora impostata, ma non è un problema: nessun codice unprivileged gira prima del primo \texttt{task\_launch}.
+\end{itemize}
+
+\paragraph*{3. Il Doppio Livello di Protezione}
+
+\begin{itemize}
+    \item \textbf{Livello 1: difesa hardware (MPU)}, ferma le azioni \textit{dirette} del task
+    \begin{itemize}
+        \item \textbf{Meccanismo}: un accesso unprivileged fuori regione, o rifiutato da \texttt{AP}/\texttt{XN}, \textbf{non avviene} (la store non scrive, la load non legge) e scatta \texttt{MemManage} (eccezione 4, abilitata da \texttt{MEMFAULTENA} in \texttt{SHCSR}). \texttt{MemManage\_Handler} (\texttt{kernel/faults.c}) gira privilegiato su MSP.
+        \item \textbf{Diagnosi \texttt{CFSR}} (\texttt{0xE000ED28}, byte basso): bit 0 \texttt{IACCVIOL} (fetch rifiutato, es. XN) $\cdot$ bit 1 \texttt{DACCVIOL} (load/store rifiutato) $\cdot$ bit 3 \texttt{MUNSTKERR} (unstacking su exception return) $\cdot$ bit 4 \texttt{MSTKERR} (stacking su exception entry) $\cdot$ bit 7 \texttt{MMARVALID} (\texttt{MMFAR} valido).
+        \item \textbf{Regole di lettura}: \texttt{MMFAR} (\texttt{0xE000ED34}) si legge solo se \texttt{MMARVALID}=1. \texttt{CFSR} si legge una sola volta e le cause si testano con \texttt{if} separati (più bit possono essere attivi insieme).
+        \item \textbf{Rogue Task} (\texttt{DEMO=rogue}): B scrive su \texttt{uptime\_ms} del kernel $\rightarrow$ \texttt{CFSR=0x82} = \texttt{0x80} (\texttt{MMARVALID}) + \texttt{0x02} (\texttt{DACCVIOL}); \texttt{MMFAR=0x20002004}, fuori dalla partizione di B. Store mai eseguita $\rightarrow$ clock integro, bug fermato sull'istruzione colpevole.
+        \item \textbf{Stack Overflow} (\texttt{DEMO=overflow}): la ricorsione di B porta lo SP sotto la base della partizione $\rightarrow$ \texttt{CFSR=0x92} = \texttt{0x80} + \texttt{0x10} (\texttt{MSTKERR}) + \texttt{0x02} (\texttt{DACCVIOL}); \texttt{MMFAR=0x20000fdc}, subito sotto \texttt{0x20001000}, dentro la partizione di A. \texttt{DACCVIOL}: Region 1 copre solo B. \texttt{MSTKERR}: anche il push del frame a 8 parole sulla PSP, già fuori regione, viene rifiutato.
+        \item \textbf{Stack in fondo alla partizione} (Unit 2): l'overflow esce subito da Region 1 $\rightarrow$ fault immediato invece di corrompere in silenzio i dati di A.
+    \end{itemize}
+    \item \textbf{Livello 2: difesa software (Kernel)}, ferma le azioni che il task \textit{chiede al kernel}
+    \begin{itemize}
+        \item \textbf{Limite dell'MPU} (\texttt{DEMO=badptr}): nelle syscall la CPU è privilegiata (\texttt{SVC\_Handler}, \texttt{PRIVDEFENA}=1) $\rightarrow$ il kernel accede ovunque e non scatta nessun fault. Un puntatore ostile verrebbe letto o scritto "per conto del task" (leak o corruzione di dati kernel).
+        \item \textbf{Regola}: l'intero buffer \texttt{[buf, buf+len)} deve stare nella partizione RAM del chiamante \textbf{oppure} in FLASH (\texttt{0x00000000}--\texttt{0x00400000}).
+        \item \textbf{\texttt{in\_range(p, len, start, end)}}: \texttt{p >= start \&\& p <= end \&\& len <= end - p}; se \texttt{p <= end}, la sottrazione \texttt{end - p} non può andare in wrap-around.
+        \item \textbf{Perché non \texttt{p + len <= end}}: overflow modulo $2^{32}$. Con \texttt{p=0x20001F00} e \texttt{len=0xFFFFFF00} la somma vale \texttt{0x20001E00}, il controllo ingenuo passa e il task leggerebbe quasi tutta la RAM.
+        \item \textbf{In \texttt{sys\_write\_impl}}: \texttt{t = task\_current()} (0 = chiamante è il kernel, fidato). Se \texttt{t != 0} e il buffer non è né in \texttt{[part\_start, part\_end)} né in FLASH $\rightarrow$ \texttt{return (uint32\_t)-1}.
+        \item \textbf{Esito \texttt{badptr}}: \texttt{0x20002004} (\texttt{uptime\_ms}) non è né in B né in FLASH $\rightarrow$ \texttt{sys\_write} ritorna \texttt{-1} prima di \texttt{uart\_write}. Nessun dato kernel esposto e B continua (errore gestibile, non un fault hardware).
+    \end{itemize}
+    \item \textbf{Sintesi}: MPU = azioni dirette del task; controllo dei puntatori = azioni delegate al kernel $\rightarrow$ servono \textbf{entrambi}.
+\end{itemize}
+
+\paragraph*{4. Dinamica del Context Switch (\texttt{task\_exit\_current} $\rightarrow$ \texttt{task\_launch})}
+
+\begin{enumerate}
+    \item \textbf{Trigger}: il task A termina $\rightarrow$ ritorna allo stub \texttt{task\_exit} $\rightarrow$ \texttt{svc \#4} (\texttt{SYS\_EXIT}) $\rightarrow$ il dispatcher (Handler mode, privilegiato, MSP) chiama \texttt{task\_exit\_current()}.
+    \item \textbf{Decisione}: stampa \texttt{task A exited}; se \texttt{current + 1 $<$ NUM\_TASKS} $\rightarrow$ \texttt{return task\_launch(current + 1)} (qui \texttt{task\_launch(1)}).
+    \item \textbf{Chiamata MPU}: \texttt{task\_launch} invoca \texttt{mpu\_set\_task\_region(part\_start, part\_end - part\_start)} \textbf{prima} di entrare nel task. Lo "stato MPU" di un task è un solo valore: la base di Region 1.
+    \item \textbf{Calcolo \texttt{SIZE}}: \texttt{log2\_size = \_\_builtin\_ctz(4096) = 12} $\rightarrow$ \texttt{MPU\_RASR\_SIZE(12)} = \texttt{0x16}.
+    \item \textbf{Scrittura \texttt{RBAR}}: base + \texttt{VALID} + 1 = \texttt{0x20001011}. \texttt{VALID} seleziona Region 1 senza passare da \texttt{RNR}; la base passa da \texttt{0x20000000} (A) a \texttt{0x20001000} (B).
+    \item \textbf{Scrittura \texttt{RASR}}: \texttt{XN} + \texttt{AP(FULL\_RW)} + \texttt{S} + \texttt{C} + \texttt{SIZE} + \texttt{ENABLE} = \texttt{0x13060017} $\rightarrow$ Region 1 = partizione di B, RW e non eseguibile (valore identico per A e B: cambia solo la base in \texttt{RBAR}).
+    \item \textbf{Barriere}: \texttt{dsb} (le scritture sono completate) + \texttt{isb} (le istruzioni successive vedono le nuove regioni) $\rightarrow$ nessun accesso viene controllato con le regioni vecchie.
+    \item \textbf{Ingresso nel task}: l'handler ritorna \texttt{0xFFFFFFFD} (Thread mode, PSP) $\rightarrow$ l'exception return carica il frame fittizio di B $\rightarrow$ B parte unprivileged sulla PSP.
+    \item \textbf{Stato finale}: Region 0 invariata (FLASH RO + eseguibile); Region 1 = partizione di B; la partizione di A non ha più regione $\rightarrow$ invisibile e inaccessibile a B.
+    \item \textbf{Ramo alternativo (ultimo task)}: \texttt{current = -1}; \texttt{CONTROL.nPRIV} azzerato (altrimenti \texttt{main()} andrebbe in fault al primo accesso all'UART); ritorna \texttt{0xFFFFFFF9} (Thread mode, MSP) $\rightarrow$ \textbf{nessun aggiornamento MPU}, \texttt{main()} riprende privilegiato.
+\end{enumerate}
