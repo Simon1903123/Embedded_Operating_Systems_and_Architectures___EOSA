@@ -76,6 +76,12 @@
 \usepackage{array}
 \usepackage[table]{xcolor}
 
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, patterns}
+
+
+\setlength{\emergencystretch}{3em}
+
 % ---- Macro della tabella ----
 % Colonne a larghezza relativa a \textwidth: se serve, cambia solo questi tre numeri.
 \newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1\textwidth}}
@@ -176,7 +182,8 @@
 %\include{contents/week-01_Intro_and_toolchain}
 %\include{contents/week-02_Boot_and_CPU_Configuration}
 %\include{contents/week-03_IO_and_Interrupts}
-\include{contents/week-04_MR_Management_and_Protection}
+%\include{contents/week-04_MR_Management_and_Protection}
+\include{contents/week-05_scheduling_p1}
 %\include{contents/exercises}
 
 \end{document}
