@@ -18,7 +18,7 @@ The scratch-OS has system calls, privileged and unprivileged software, memory ma
 \end{itemize}
 \paragraph{Approach of the course.} There are many algorithms to study, but the \emph{mechanism} that runs any of them is always the same. So the scratch-OS implements \textbf{only one} (round robin): changing algorithm changes only a \emph{high-level} part of the OS, while the low-level mechanisms, above all the \textbf{context switch}, stay the same. An algorithm is a few lines of C, and implementing all of them would teach little; the context switch is much harder, and different on every machine. The implementation effort goes there; the other algorithms are studied in theory (and can be implemented as a personal exercise).
 
-\section{Process management: the ideas}
+\section{Unit 1 - Process management: the ideas}
 
 \subsection{Program, process and task}
 A \textbf{program} is code and data in memory, the result of compiling (e.g.\ the ELF file of our projects): by itself it does nothing. A \textbf{process} is a \emph{program in execution}: copied from FLASH to memory, with its kernel data structures created, and so on. It is the code (\textbf{text}) plus everything that changes while it runs: \textbf{data} (global and static variables), \textbf{stack} (local variables, arguments, return addresses) and \textbf{CPU state} (the PC, pointing at the next instruction, the SP and all the other registers). It runs \textbf{sequentially}: never two of its own instructions at the same time.
@@ -97,10 +97,23 @@ void task_b( void )
 }
 \end{lstlisting}
 
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/tasklook_structures.png}
+    \caption{The two structures of an embedded task. A run-to-completion task does its job once and then is FINISHED for ever; an endless-loop task waits for an event (BLOCKED), works, and waits again, never ending. While it is BLOCKED, the CPU is free for the other tasks.}
+\end{figure}
+
 Most embedded tasks are endless loops that never reach FINISHED, e.g.\ monitoring a sensor, read as long as the device is on: at each new reading the task wakes up, processes it and waits for the next. Waiting for an event needs OS support (very simple in our case), and it is what makes sharing work: a BLOCKED task leaves the CPU to the others, while a task that never waits (looping on busy work) keeps it as long as the kernel lets it.
 
-\subsection{The task control block (TCB)}
+\subsection{The Task Control Block (TCB)}
 With a scheduler, four run-time states and two task structures, the kernel needs a \textbf{data structure} per task, above all to save the full CPU context in memory when the task stops. Week 4's \texttt{struct task}, made to run two tasks, is extended to hold more: the \textbf{TCB} (\textbf{process control block}, PCB, in general-purpose systems), one record per task, so that the kernel can stop it and restart it later. It holds:
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/tcb_record.png}
+    \caption{A generic TCB, one per task. In a stopped task, \texttt{sp} points at the lowest saved word (\texttt{r4}) on the task's own stack: the 16 saved words lie just below the stack top, so \texttt{0x20001400} $-$ 64 = \texttt{0x200013C0}. In the running task, \texttt{sp} is not meaningful, because its registers are live in the CPU. The \texttt{next} links chain the TCBs into queues: \texttt{ready\_list} = B $\to$ C, while D, BLOCKED until tick 1500, is in \texttt{blocked\_list}.}
+\end{figure}
+
 \begin{itemize}
     \item the \textbf{saved stack pointer}: where the task's registers were saved (pushed on its own stack) when it stopped; already in week 4's structure;
     \item the \textbf{state}: READY, RUNNING, BLOCKED or FINISHED; new, not in last week's code;
@@ -108,6 +121,7 @@ With a scheduler, four run-time states and two task structures, the kernel needs
     \item \textbf{scheduling information}: whatever the algorithm needs, e.g.\ a priority, or the wake-up time of a delayed task;
     \item a \textbf{link to the next TCB}, to build queues (e.g.\ of READY tasks).
 \end{itemize}
+
 A desktop OS's PCB holds much more: open files, memory maps, CPU time used, parent and children (Linux: \texttt{struct task\_struct}). In TCB terms, a context switch saves the CPU state, stores the SP in the old task's TCB, takes the SP from the new task's TCB and restores its CPU state. The TCBs live in a \textbf{static} structure such as an \textbf{array} (simple, but the set of tasks is fixed by its size) or a \textbf{dynamic} one such as a \textbf{linked list} (tasks added and removed at run time, each TCB pointing to the next); Linux organises almost every data structure with more than one element as a \emph{doubly} linked list (pointers to next and previous).
 
 \subsection{When does the scheduler run?}
@@ -171,7 +185,9 @@ A \textbf{preemptive} scheduler can take the CPU from a running task \emph{witho
 Likewise for algorithms: \textbf{non-preemptive} ones never take the CPU from a running task, \textbf{preemptive} ones do.
 
 \subsection{Exercise: follow two tasks}
-A preemptive kernel (every task gets a fixed time slice) runs tasks A and B; both are READY at boot. When a task becomes READY, it waits until the running task's time slice ends. Events, in order:
+No algorithm and no computation: for each event, decide \textbf{which task states change} and \textbf{whether the scheduler runs}.
+
+\paragraph{Setting.} A preemptive kernel gives every task a fixed time slice and runs tasks A and B, both READY at boot. A task that becomes READY waits until the running task's time slice ends. Events, in order:
 \begin{enumerate}
     \item the scheduler picks A;
     \item A calls \texttt{delay(10 ticks)};
@@ -180,33 +196,43 @@ A preemptive kernel (every task gets a fixed time slice) runs tasks A and B; bot
     \item B's time slice ends;
     \item A calls \texttt{exit}.
 \end{enumerate}
-After each event, write the state of A and B and the transition that happened.
+After each event, write the state of A and B and the transitions it caused.
 
-\paragraph{Solution.} At boot nothing distinguishes A and B: by the tie rule of all exercises \textbf{and of the exam}, the \textbf{lowest identifier} runs first (Section~\ref{w05:conventions}), so event 1 picks A.
-\begin{center}
-\begin{tabular}{l l l p{5.6cm}}
-\hline
-\textbf{after event} & \textbf{A} & \textbf{B} & \textbf{transition} \\
-\hline
-1. scheduler picks A & RUNNING & READY & A: READY $\to$ RUNNING \\
-2. A calls delay & BLOCKED & RUNNING & A: RUNNING $\to$ BLOCKED, B: READY $\to$ RUNNING \\
-3. B's slice ends & BLOCKED & RUNNING & none: no other task is READY, B keeps the CPU \\
-4. A's delay is over & READY & RUNNING & A: BLOCKED $\to$ READY (not RUNNING: B's slice is not over) \\
-5. B's slice ends & RUNNING & READY & B: RUNNING $\to$ READY (preempted), A: READY $\to$ RUNNING \\
-6. A calls exit & FINISHED & RUNNING & A: RUNNING $\to$ FINISHED, B: READY $\to$ RUNNING \\
-\hline
-\end{tabular}
-\end{center}
+\paragraph{Method.} For every event, ask three questions:
+\begin{enumerate}
+    \item \textbf{What happens to the running task?} \texttt{delay}: RUNNING $\to$ BLOCKED. \texttt{exit}: RUNNING $\to$ FINISHED. End of slice: RUNNING $\to$ READY, but \emph{only} if another task is READY.
+    \item \textbf{Does a task wake up?} The end of a delay only moves it BLOCKED $\to$ READY: it does not call the scheduler.
+    \item \textbf{Does the scheduler run, and whom does it pick?} After a \texttt{delay}, an \texttt{exit} or the end of a slice, it picks a READY task (on a tie, the lowest identifier). If no other task is READY, the running task continues.
+\end{enumerate}
 
-\begin{itemize}
-    \item \textbf{Event 2}: \texttt{delay} blocks: A becomes BLOCKED, the scheduler runs, and B, the only READY task, starts.
-    \item \textbf{Event 3}: B's time is over and the scheduler runs, but with A blocked it has no choice: B runs again. Preemption needs another READY task; otherwise the running task just continues, and the CPU does not idle waiting for A (implementing this correctly is not as easy as it sounds: see Unit 2).
-    \item \textbf{Event 4}: A is READY, but B keeps its slice to the end: once given, a slice is not taken back, even if B already ran twice in a row.
-    \item With A and B both BLOCKED, nothing could run, but the kernel must execute something anyway: Unit 2's answer is the \emph{idle task}.
-\end{itemize}
+\paragraph{Solution.} The exercise gives no times. The figure assumes a 6-tick slice and 2 ticks of work before each call; only the order of the events matters.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/followtwo_timeline.png}
+    \caption{The six events on a time axis, with the transitions of each event. At event 3 nobody else is READY, so B keeps the CPU (blue bar). At event 4 A only becomes READY. At event 5 B is preempted (red bar).}
+\end{figure}
+
+\begin{enumerate}
+    \item At boot A and B tie, so the \textbf{lowest identifier} runs (Section~\ref{w05:conventions}). A: READY $\to$ RUNNING.
+    \item \texttt{delay} blocks A (RUNNING $\to$ BLOCKED), and the only READY task, B, starts (READY $\to$ RUNNING).
+    \item \textbf{No transition}. A is BLOCKED, so B gets a new slice and goes on. Preemption needs another READY task, and the CPU does not idle waiting for A (implementing this correctly is not as easy as it sounds: see Unit 2).
+    \item A goes BLOCKED $\to$ READY, \textbf{not} RUNNING. B keeps its slice to the end, even though it has already had two slices in a row.
+    \item Now A is READY, so B is preempted (RUNNING $\to$ READY) and A runs (READY $\to$ RUNNING).
+    \item A goes RUNNING $\to$ FINISHED, and B goes READY $\to$ RUNNING.
+\end{enumerate}
+\textbf{The two traps}: the end of a slice is not always a preemption (event 3), and READY is not RUNNING (event 4). If A and B were both BLOCKED, nothing could run, yet the CPU must execute something: Unit 2's answer is the \emph{idle task}.
+
 
 \section{Scheduling criteria}
 Policies are compared with \textbf{metrics}, which \textbf{conflict} (no algorithm is the best at all of them), so algorithms are usually compared on \textbf{averages} over all tasks. A task \textbf{arrives} (becomes READY) at $a$, needs $C$ units of CPU, \textbf{starts} for the first time at $s$ and \textbf{finishes} at $f$.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/criteria_metrics.png}
+    \caption{The scheduling criteria on one schedule (round robin, $q = 2$; A: $a=0, C=3$; B: $a=1, C=3$; C: $a=3, C=1$; D: $a=9, C=2$). Left: task B alone, from arrival $a$ to first start $s$ to finish $f$. Its response is $s - a$, its turnaround is $f - a$, and its waiting time is the time spent READY, i.e.\ $f - a - C$. Right: the whole system. Utilisation and throughput come from the CPU row (2 idle slots out of 11). The per-task metrics are compared through their averages. Fairness asks whether the waiting is spread evenly among the tasks.}
+\end{figure}
+
 \begin{itemize}
     \item \textbf{CPU utilisation} (maximise): the fraction of time the CPU actually runs tasks; time in the scheduler, in other OS code or idle lowers it. The ideal 100\% is never reached: the closer, the better.
     \item \textbf{Throughput} (maximise): tasks finished per unit of time; the goal when finishing many tasks globally matters, even if one task may take long.
@@ -291,6 +317,13 @@ A finds the CPU free and runs from 0 to 6: turnaround $6 - 0 = 6$, waiting $6 - 
     C     #........
     CPU   CBBAAAAAA
 \end{verbatim}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/fcfs_convoy.png}
+    \caption{The convoy effect in FCFS. The same three tasks in two arrival orders: same work and same end, but the average waiting time drops from 3.67 to 0.33 when the long task arrives last.}
+\end{figure}
+
 Same work and same end (9), but the average waiting time drops from 3.67 to 0.33. Short tasks stuck behind a long one: the \textbf{convoy effect}, a really bad behaviour and the reason why general-purpose systems do not use FCFS; but FCFS is simple, which is why week 4 used it.
 
 \paragraph{Exercise: FCFS.} Four tasks: A ($a=0, C=4$), B ($a=2, C=3$), C ($a=3, C=1$), D ($a=9, C=2$). Draw the Gantt chart and the schedule string; compute turnaround, waiting and response time of each task and their averages; compute CPU utilisation and throughput.
@@ -366,6 +399,13 @@ The queue (head on the left) at each decision:
     \item $t=7$: A goes to the tail: \texttt{D B A}. D runs slots 7 and 8 and finishes.
     \item $t=9$: \texttt{B A}. B runs its last unit (slot 9); A runs its last one (slot 10) and finishes at 11.
 \end{itemize}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/rr_worked_queue.png}
+    \caption{Round robin worked example ($q = 2$) with the ready queue at every scheduling decision. At $t=2$ and $t=4$ a task arrives exactly when a quantum expires, so it joins the queue before the preempted task.}
+\end{figure}
+
 The numbers (turnaround, waiting, response): A $11 - 0 = 11$, $11 - 5 = 6$, 0; B $10 - 1 = 9$, $9 - 3 = 6$, $2 - 1 = 1$; C $5 - 2 = 3$, 2, 2; D $9 - 4 = 5$, 3, 3.
 
 \subsection{Exercise: round robin, $q = 2$}
@@ -473,6 +513,12 @@ No task needs more than 4 units, so no quantum ever expires: this is exactly FCF
         \hline
     \end{tabular}
 \end{center}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/rr_quantum.png}
+    \caption{The same four tasks with three quanta. A small $q$ gives the best response but 9 context switches. A large $q$ gives few switches and the best waiting time, but it is exactly FCFS. No quantum is best for every metric.}
+\end{figure}
 
 $q = 1$ has the best average response but the most switches; $q = 4$ the fewest switches and the best average waiting and turnaround, but it is exactly FCFS, with the worst response. No quantum is best for everything: a \textbf{small} one gives every task the CPU soon (good response time) at the cost of many context switches; a \textbf{large} one has few switches, but a task may wait long for its turn (with $q$ longer than every task, round robin becomes FCFS). Typical choice: a few milliseconds, much longer than one context switch, but short enough for interactive tasks to feel immediate.
 
@@ -590,6 +636,13 @@ Step by step:
     \item $t=8$: D runs. At $t=10$, E (3) arrives and preempts D: E runs slots 10 and 11; then D finishes its last unit in slot 12.
     \item $t=13$: only L is left. It runs slots 13 and 14 and finishes at 15.
 \end{itemize}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/prio_starvation.png}
+    \caption{Preemptive priority scheduling, with lanes ordered from the highest priority down. C and E preempt lower-priority tasks as soon as they arrive. At $t=7$, B and D tie on priority 2, so the lowest identifier runs. L, with the lowest priority, waits 13 units for 2 units of work: with a steady flow of higher-priority work it would starve.}
+\end{figure}
+
 L arrives at 0 but runs only at 13: 13 units of waiting for 2 of work. If higher-priority tasks kept arriving forever, L would \textbf{never} run (starvation); with aging, its priority would grow while it waits, until it beats the others and runs.
 
 \section{Unit 1: summary}
@@ -605,7 +658,8 @@ L arrives at 0 but runs only at 13: 13 units of waiting for 2 of work. If higher
 \paragraph{Are these algorithms used in practice?} They are the simple textbook algorithms, but not far from reality: the Linux scheduler uses more complex rules, not so different from these. \textbf{FCFS} is still used in some small and mid-size devices; \textbf{priority} scheduling is everywhere: every car, train and airplane, and real-time systems in general; all the other systems run \textbf{round robin}, with many add-ons for efficiency. Behind any of them, the really complex mechanism is the context switch, implemented on the Cortex-M3 in Unit 2.
 
 
-\section{Context switch and round robin in the scratch-OS}
+
+\section{Unità 2 - Context switch and round robin in the scratch-OS}
 This unit adds a \textbf{round-robin scheduler} with a real \textbf{context switch} to the scratch-OS. Tasks A and B, fixed in number, do not change; but instead of week 4's deterministic order (B started when A called \texttt{exit}, the only scheduling decision), they take turns as in Unit 1: a quantum is defined, and each task runs one time slice before the other gets the CPU.
 
 \paragraph{Link with the project.} This code is the \textbf{base of the course project}: the ``project base'' module at the top of the project page is essentially this unit's end point, plus a few mechanisms already implemented so that the project need not write them. The project keeps this scheduler and memory management, and changes only how a task starts: tasks become \textbf{program files stored in FLASH} instead of C functions linked into the image, so when a task is started (and only then) the OS locates its program in FLASH and copies it to memory; from there on it works as now. So it is really important to study this week's code.
@@ -617,6 +671,7 @@ This unit adds a \textbf{round-robin scheduler} with a real \textbf{context swit
     \item The notes cover more than the slides: a second gdb session, the rogue and cooperative demos, the delay services and the idle task in code, and the trace step by step.
     \item Paths are relative to \texttt{week-05/solution/} unless stated otherwise. QEMU now runs with its serial port on the terminal, so it is stopped with \textbf{Ctrl-C}.
 \end{itemize}
+
 Files changed since week 4:
 \begin{itemize}
     \item \texttt{kernel/task.h}, \texttt{kernel/task.c}: \texttt{struct tcb}, \texttt{enum task\_state}, \texttt{QUANTUM}, \texttt{tasks}, \texttt{tcb\_current}, \texttt{tick\_count} and the scheduler functions \texttt{task\_init\_stack}, \texttt{task\_start\_first}, \texttt{task\_request\_switch}, \texttt{task\_increment\_tick}, \texttt{task\_block\_until}, \texttt{task\_finish\_current}, \texttt{task\_switch\_context};
@@ -627,6 +682,76 @@ Files changed since week 4:
     \item \texttt{src/main.c}, \texttt{src/task\_a.c}, \texttt{src/task\_b.c}: the start of the tasks, the tasks and their \texttt{coop} and \texttt{idle} demo blocks; \texttt{Makefile}: \texttt{QUANTUM} and the two new demos;
     \item \texttt{kernel/trace.h}, \texttt{kernel/trace.c} (complete only in the solution): \texttt{trace\_record\_switch}, \texttt{trace\_print} and their helpers.
 \end{itemize}
+
+\begin{center}
+\begin{tabular}{l l p{6.2cm}}
+    \hline
+    \textbf{command} & \textbf{what changes} & \textbf{what to observe} \\
+    \hline
+    \texttt{make run} & default, quantum 5 & A and B alternate every 5 ticks; B alone after 32 \\
+    \texttt{make QUANTUM=2 run} & 2-tick slice & one step per turn, A ends at 40, 21 switches \\
+    \texttt{make DEMO=rogue run} & B writes a kernel variable & MemManage after a switch: isolation holds \\
+    \texttt{make DEMO=coop run} & \texttt{QUANTUM=0}, no yield & B never runs: starvation \\
+    \texttt{make DEMO=idle run} & delays & A drifts, B does not, idle fills the gaps \\
+    \texttt{make debug} + gdb & breakpoints in PendSV & hardware frame, \texttt{sp}, MPU registers \\
+    \hline
+\end{tabular}
+\end{center}
+
+\subsection{The folder \texttt{week-05/base}}
+This is the code we start from: the scheduler is already in place, and only the trace is left to write. Files in bold are new or changed since week 4.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/week05_base_tree.png}
+    \caption{The folder \texttt{week-05/base}. Files new or changed since week 4 are in bold blue; \texttt{kernel/trace.c} is an empty skeleton, written in class and at home.}
+\end{figure}
+
+\begin{center}
+    \small
+    \begin{tabular}{l p{11.2cm}}
+        \hline
+        \textbf{file} & \textbf{what it is} \\
+        \hline
+        \textbf{\texttt{Makefile}} & build, \texttt{make run}, \texttt{make debug}; options \texttt{QUANTUM} and \texttt{DEMO} (\texttt{rogue}, \texttt{coop}, \texttt{idle}), each in its own build folder \\
+        \hline
+        \multicolumn{2}{l}{\texttt{boot/}} \\
+        \textbf{\texttt{startup.s}} & vector table and \texttt{Reset\_Handler}: sets the exception priorities (faults \texttt{0x00}, SVCall \texttt{0x80}, SysTick and PendSV \texttt{0xE0}), then \texttt{main} \\
+        \hline
+        \multicolumn{2}{l}{\texttt{drivers/}} \\
+        \textbf{\texttt{systick.c}}, \texttt{systick.h} & the 10\,ms tick; \texttt{SysTick\_Handler} now also calls \texttt{task\_increment\_tick} \\
+        \texttt{uart.c}, \texttt{uart.h} & serial port: the text printed on the terminal (interrupt at \texttt{0xC0}) \\
+        \hline
+        \multicolumn{2}{l}{\texttt{include/}} \\
+        \texttt{cmsdk.h} & addresses and registers of the board's hardware (SCB, SysTick, UART, MPU) \\
+        \hline
+        \multicolumn{2}{l}{\texttt{kernel/}} \\
+        \texttt{faults.c} & fault handlers: MemManage prints \texttt{CFSR} and the address, then stops the system \\
+        \texttt{irq.s}, \texttt{irq.h} & low-level interrupt routines in assembly, and their declarations \\
+        \texttt{kprintf.c}, \texttt{kprintf.h} & the kernel's privileged \texttt{printf}, used inside handlers (e.g.\ \texttt{trace\_print}) \\
+        \texttt{mpu.h} & MPU interface: regions and \texttt{mpu\_set\_task\_region} \\
+        \textbf{\texttt{pendsv.s}} & \texttt{PendSV\_Handler}: the context switch, 13 instructions \\
+        \texttt{svc\_entry.s} & SVCall entry: takes the caller's frame and passes it to the C dispatcher \\
+        \textbf{\texttt{syscall.c}}, \texttt{syscall.h} & kernel side of the system calls: the \texttt{sys\_*\_impl} services (yield, delay, delay until, exit, tick count, trace dump) \\
+        \textbf{\texttt{task.c}}, \textbf{\texttt{task.h}} & the scheduler: \texttt{struct tcb}, \texttt{tasks[]}, \texttt{tcb\_current}, \texttt{tick\_count}, \texttt{QUANTUM} and the \texttt{task\_*} functions \\
+        \textbf{\texttt{trace.c}}, \textbf{\texttt{trace.h}} & the trace: ring buffer, recording, printing, Gantt chart (\texttt{trace.c} is a skeleton: to write) \\
+        \hline
+        \multicolumn{2}{l}{\texttt{lib/} (task side, unprivileged)} \\
+        \texttt{format.c}, \texttt{format.h} & formatting of numbers and strings for \texttt{printf} \\
+        \textbf{\texttt{printf.c}}, \texttt{printf.h} & the tasks' \texttt{printf} (through a system call) and \texttt{spin\_ticks}, the busy work \\
+        \textbf{\texttt{syscall.h}}, \textbf{\texttt{syscall.s}} & service numbers and \texttt{svc} stubs: \texttt{task\_yield}, \texttt{task\_delay}, \texttt{task\_delay\_until}, \texttt{task\_tick\_count}, \texttt{trace\_dump}, exit \\
+        \hline
+        \multicolumn{2}{l}{\texttt{scripts/}} \\
+        \textbf{\texttt{mps2\_m3.ld}} & linker script: FLASH, three 4\,KB partitions (A, B, idle), kernel RAM \\
+        \hline
+        \multicolumn{2}{l}{\texttt{src/} (the application)} \\
+        \textbf{\texttt{idle.c}} & \texttt{idle\_task}: \texttt{wfi} forever \\
+        \textbf{\texttt{main.c}} & starts SysTick, then the tasks (\texttt{svc \#5}) \\
+        \texttt{tasks.h} & declarations of the task functions \\
+        \textbf{\texttt{task\_a.c}}, \textbf{\texttt{task\_b.c}} & the two tasks: busy steps, plus the demo blocks \\
+        \hline
+    \end{tabular}
+\end{center}
 
 \subsection{Running the two tasks}
 Each task does \textbf{busy work} in \textbf{steps} of 2 ticks (a tick is 10\,ms, as in week 3) and prints the tick number after each step: A does 10 steps, B 15. The busy work, \texttt{spin\_ticks} (\texttt{lib/printf.c}), reads the tick count with the system call \texttt{task\_tick\_count} and loops until the given ticks have passed, never blocking or yielding: it keeps the CPU until the kernel takes it away. In the normal build, \texttt{task\_a} (\texttt{src/task\_a.c}) and \texttt{task\_b} (\texttt{src/task\_b.c}) are a \texttt{for} loop of \texttt{spin\_ticks( WORK\_TICKS )} and \texttt{printf}.
@@ -669,44 +794,57 @@ Round robin first needs the \textbf{context switch}: save the running task, rest
 \subsection{A switch from A to B: the two stacks}
 Each task's stack holds the hardware frame (saved by the CPU) and the registers saved by the kernel; each task's TCB holds its stack pointer.
 \begin{figure}[h]
-\centering
-\begin{tikzpicture}[scale=0.95, transform shape,
-    reg/.style={draw, minimum width=1.6cm, minimum height=0.42cm, font=\scriptsize\ttfamily, inner sep=0pt},
-    tcb/.style={draw, rounded corners, align=left, font=\scriptsize, inner sep=3pt},
-    lab/.style={font=\scriptsize, align=center}]
-    % task A stack
-    \node[lab] at (0,0.75) {\textbf{task A stack}\\top \texttt{0x20000400}};
-    \foreach \r [count=\i from 0] in {xPSR,PC,LR,r12,r3,r2,r1,r0}
-        \node[reg, fill=gray!15] at (0,{-\i*0.42}) {\r};
-    \foreach \r [count=\i from 8] in {r11,r10,r9,r8,r7,r6,r5,r4}
-        \node[reg, fill=gray!40] at (0,{-\i*0.42}) {\r};
-    % task B stack
-    \node[lab] at (5.2,0.75) {\textbf{task B stack}\\top \texttt{0x20001400}};
-    \foreach \r [count=\i from 0] in {xPSR,PC,LR,r12,r3,r2,r1,r0}
-        \node[reg, fill=gray!15] at (5.2,{-\i*0.42}) {\r};
-    \foreach \r [count=\i from 8] in {r11,r10,r9,r8,r7,r6,r5,r4}
-        \node[reg, fill=gray!40] at (5.2,{-\i*0.42}) {\r};
-    % labels A
-    \draw (-0.95,0.15) -- (-0.95,-3.13);
-    \node[lab, left] at (-1,-1.47) {saved by the CPU\\on exception entry};
-    \draw (-0.95,-3.21) -- (-0.95,-6.51);
-    \node[lab, left] at (-1,-4.83) {saved by\\\texttt{PendSV\_Handler}};
-    % labels B
-    \draw (6.15,0.15) -- (6.15,-3.13);
-    \node[lab, right] at (6.2,-1.47) {restored by the CPU\\on exception return};
-    \draw (6.15,-3.21) -- (6.15,-6.51);
-    \node[lab, right] at (6.2,-4.83) {restored by\\\texttt{PendSV\_Handler}};
-    % TCBs
-    \node[tcb] (tcbA) at (2.6,-1.3) {\textbf{TCB of task A}\\\texttt{sp} (offset 0)\\\texttt{name}\\\ldots};
-    \node[tcb] (tcbB) at (2.6,-5.0) {\textbf{TCB of task B}\\\texttt{sp} (offset 0)\\\texttt{name}\\\ldots};
-    \node[font=\scriptsize\ttfamily] (cur) at (2.6,-3.15) {tcb\_current};
-    \draw[->, >=stealth] (cur) -- node[right, font=\scriptsize] {before} (tcbA);
-    \draw[->, >=stealth] (cur) -- node[right, font=\scriptsize] {after} (tcbB);
-    \draw[->, >=stealth] (tcbA.west) -- (0.8,-6.3);
-    \draw[->, >=stealth] (tcbB.east) -- (4.4,-6.3);
-\end{tikzpicture}
-\caption{A switch from A to B. Each TCB's \texttt{sp} points at the lowest saved word (\texttt{r4}) of its task's stack. \texttt{tcb\_current} points at the TCB of the task that runs: the switch saves A, moves \texttt{tcb\_current} to B, and restores B. At the end, PSP points at B's hardware frame.}
+    \centering
+    \begin{tikzpicture}[scale=0.95, transform shape,
+        reg/.style={draw, minimum width=1.6cm, minimum height=0.42cm, font=\scriptsize\ttfamily, inner sep=0pt},
+        tcb/.style={draw, rounded corners, align=left, font=\scriptsize, inner sep=3pt},
+        lab/.style={font=\scriptsize, align=center}]
+        % task A stack
+        \node[lab] at (0,0.75) {\textbf{task A stack}\\top \texttt{0x20000400}};
+        \foreach \r [count=\i from 0] in {xPSR,PC,LR,r12,r3,r2,r1,r0}
+            \node[reg, fill=gray!15] at (0,{-\i*0.42}) {\r};
+        \foreach \r [count=\i from 8] in {r11,r10,r9,r8,r7,r6,r5,r4}
+            \node[reg, fill=gray!40] at (0,{-\i*0.42}) {\r};
+        % task B stack
+        \node[lab] at (5.2,0.75) {\textbf{task B stack}\\top \texttt{0x20001400}};
+        \foreach \r [count=\i from 0] in {xPSR,PC,LR,r12,r3,r2,r1,r0}
+            \node[reg, fill=gray!15] at (5.2,{-\i*0.42}) {\r};
+        \foreach \r [count=\i from 8] in {r11,r10,r9,r8,r7,r6,r5,r4}
+            \node[reg, fill=gray!40] at (5.2,{-\i*0.42}) {\r};
+        % labels A
+        \draw (-0.95,0.15) -- (-0.95,-3.13);
+        \node[lab, left] at (-1,-1.47) {saved by the CPU\\on exception entry};
+        \draw (-0.95,-3.21) -- (-0.95,-6.51);
+        \node[lab, left] at (-1,-4.83) {saved by\\\texttt{PendSV\_Handler}};
+        % labels B
+        \draw (6.15,0.15) -- (6.15,-3.13);
+        \node[lab, right] at (6.2,-1.47) {restored by the CPU\\on exception return};
+        \draw (6.15,-3.21) -- (6.15,-6.51);
+        \node[lab, right] at (6.2,-4.83) {restored by\\\texttt{PendSV\_Handler}};
+        % TCBs
+        \node[tcb] (tcbA) at (2.6,-1.3) {\textbf{TCB of task A}\\\texttt{sp} (offset 0)\\\texttt{name}\\\ldots};
+        \node[tcb] (tcbB) at (2.6,-5.0) {\textbf{TCB of task B}\\\texttt{sp} (offset 0)\\\texttt{name}\\\ldots};
+        \node[font=\scriptsize\ttfamily] (cur) at (2.6,-3.15) {tcb\_current};
+        \draw[->, >=stealth] (cur) -- node[right, font=\scriptsize] {before} (tcbA);
+        \draw[->, >=stealth] (cur) -- node[right, font=\scriptsize] {after} (tcbB);
+        \draw[->, >=stealth] (tcbA.west) -- (0.8,-6.3);
+        \draw[->, >=stealth] (tcbB.east) -- (4.4,-6.3);
+    \end{tikzpicture}
+    \caption{A switch from A to B. Each TCB's \texttt{sp} points at the lowest saved word (\texttt{r4}) of its task's stack. \texttt{tcb\_current} points at the TCB of the task that runs: the switch saves A, moves \texttt{tcb\_current} to B, and restores B. At the end, PSP points at B's hardware frame.}
 \end{figure}
+
+\begin{center}
+\begin{tabular}{l l l l}
+    \hline
+    \textbf{what} & \textbf{saved by} & \textbf{where} & \textbf{restored by} \\
+    \hline
+    \texttt{r0}--\texttt{r3}, \texttt{r12}, \texttt{lr}, \texttt{pc}, \texttt{xPSR} & the CPU, on exception entry & task's stack (PSP) & the CPU, on exception return \\
+    \texttt{r4}--\texttt{r11} & PendSV (\texttt{stmdb}) & task's stack, below the frame & PendSV (\texttt{ldmia}) \\
+    stack pointer (PSP) & PendSV (\texttt{str}) & TCB, field \texttt{sp} & PendSV (\texttt{ldr}, \texttt{msr psp}) \\
+    memory rights & not saved: recomputed & TCB partition limits & \texttt{task\_switch\_context} (MPU region 1) \\
+    \hline
+\end{tabular}
+\end{center}
 
 \paragraph{Compared with week 4.} Very similar, with more to save and restore: last week only ``launched'' tasks (one ran, then the other, and the decision was always ``the next task''), so registers were never restored and \texttt{r4}--\texttt{r11} never saved. Now every switch \emph{saves and restores}, a real scheduler decides, and switches happen at \emph{several moments} (tick, yield, delay, exit), which needs a smart solution so that the switch code is not copied or called in many places: PendSV.
 
@@ -740,29 +878,10 @@ An \textbf{exception} does the switch: the kind of solution computer architects 
 
 \paragraph{Priorities and tail-chaining.} A pending exception starts only if it is more urgent than the running code (week 3: a lower number is more urgent). \texttt{Reset\_Handler} (\texttt{boot/startup.s}) sets the faults to \texttt{0x00}, SVCall to \texttt{0x80}, SysTick and PendSV to \texttt{0xE0}, the least urgent value this kernel uses; the UART interrupt is at \texttt{0xC0}. So PendSV preempts \emph{no} handler (SysTick is equal, the others more urgent): it runs only when no handler runs, just before the CPU would return to the task. When a handler ends with another exception pending, the CPU goes straight to the next handler without returning to the task: \textbf{tail-chaining}. A PendSV pended in \texttt{SysTick\_Handler} thus runs right after it, never inside it; equal priority also means that SysTick cannot preempt PendSV, so a tick never cuts a switch in half. PendSV therefore always interrupts a \emph{task}: PSP is the running task's stack, and the exception return goes back to thread mode, where the next task must start. Switching inside SysTick would be unsafe too: in most systems the tick is more urgent than some device handlers, and a switch while it interrupts one of them would make that handler return into the wrong task.
 
-\begin{figure}[h]
+\begin{figure}[H]
     \centering
-    \begin{tikzpicture}[scale=0.9, transform shape, font=\small, >=stealth,
-        box/.style={draw, minimum height=0.6cm, inner sep=3pt}]
-        \node[left, align=right, font=\scriptsize] at (-0.2,1.8) {thread mode\\(task code)};
-        \node[left, font=\scriptsize] at (-0.2,0.9) {\texttt{SysTick\_Handler}};
-        \node[left, font=\scriptsize] at (-0.2,0) {\texttt{PendSV\_Handler}};
-        % tasks
-        \node[box, fill=gray!20, minimum width=2cm] (A) at (1.0,1.8) {task A};
-        \node[box, fill=gray!20, minimum width=2cm] (B) at (9.8,1.8) {task B};
-        % SysTick
-        \node[box, fill=gray!45, minimum width=1.5cm] (S) at (3.0,0.9) {SysTick};
-        % PendSV parts
-        \node[box, fill=gray!10, minimum width=1.5cm] (P1) at (4.6,0) {save A};
-        \node[box, fill=gray!10, minimum width=1.5cm] (P2) at (6.1,0) {switch};
-        \node[box, fill=gray!10, minimum width=1.7cm] (P3) at (7.7,0) {restore B};
-        % arrows
-        \draw[->] (A.east) -- node[above right, font=\scriptsize] {SysTick interrupt} (S.north west);
-        \draw[->] (S.south east) -- node[right, font=\scriptsize] {tail-chained} (P1.north west);
-        \draw[->] (P3.north east) -- node[right, font=\scriptsize, align=left] {\texttt{EXC\_RETURN}\\\texttt{0xFFFFFFFD}} (B.west);
-        \draw[->] (0,-0.9) -- (11,-0.9) node[right] {time};
-    \end{tikzpicture}
-    \caption{The tick, the request, the switch.}
+    \includegraphics[width=1\textwidth]{contents/images/week-05/pendsv_paths.png}
+    \caption{The two ways to a switch. At the tick, SysTick counts the slice and, when it is over, pends PendSV. At a system call, the SVCall service (here \texttt{task\_delay}) blocks the task and pends PendSV. In both cases PendSV, the least urgent exception, runs tail-chained after the handler: it saves A, chooses B and returns into B.}
 \end{figure}
 
 \subsection{The switch, step by step: \texttt{PendSV\_Handler} in \texttt{kernel/pendsv.s}}
@@ -783,6 +902,7 @@ PendSV_Handler:
     ldr   r0, =0xFFFFFFFD    /* r0 = EXC_RETURN: thread mode, PSP */
     bx    r0                 /* return_from_exception(0xFFFFFFFD) */
 \end{lstlisting}
+
 \begin{enumerate}
     \item \textbf{Entry}: SysTick returns and PendSV is tail-chained. A's hardware frame, pushed on A's stack when SysTick started, is not popped and pushed again: it stays where it is, and only the other registers must be saved.
     \item \textbf{Save A} (the first five instructions). The handler runs on \textbf{MSP}, so \texttt{mrs r0, psp} reads A's stack pointer explicitly. To be fast, \texttt{stmdb r0!, \{r4-r11\}} (``store multiple, decrement before'': registers on the right, destination first) pushes \texttt{r4}--\texttt{r11} with one instruction into the 8 words below \texttt{r0}, \texttt{r4} lowest, and \texttt{!} writes the new, lower address back into \texttt{r0}: a push, but on PSP instead of the handler's own stack. Then \texttt{r0} is stored at offset 0 of \texttt{tcb\_current}, i.e.\ in \texttt{tcb\_current->sp}, as in week 4. The two halves combine: part of the state saved by the hardware on entry, the rest pushed by software, the stack pointer kept in the TCB.
@@ -790,6 +910,13 @@ PendSV_Handler:
     \item \textbf{Restore B}, the exact opposite: reload \texttt{tcb\_current}, read B's \texttt{sp}, pop \texttt{r4}--\texttt{r11} with \texttt{ldmia} (``load multiple, increment after'', the reverse of \texttt{stmdb}), and \texttt{msr psp, r0} points PSP at what is left: B's hardware frame.
     \item \textbf{Return}: \texttt{0xFFFFFFFD} is the \texttt{EXC\_RETURN} value the link register must hold, on return from an exception, to go back to thread mode (user space) using PSP (week 4). \texttt{bx r0} returns: the hardware pops B's frame, and B continues at the instruction where it was stopped.
 \end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/pendsv_steps.png}
+    \caption{The first switch (tick 5), with the addresses of the gdb session. 1: PSP points at A's hardware frame, while \texttt{r4}--\texttt{r11} are still in the CPU. 2: \texttt{stmdb} pushes them below the frame, \texttt{A.sp} $=$ \texttt{0x20000398}, and \texttt{task\_switch\_context} moves \texttt{tcb\_current} (and the MPU) to B. 3: \texttt{ldmia} pops B's \texttt{r4}--\texttt{r11}, PSP $=$ \texttt{0x200013E0}, and the exception return pops B's frame.}
+\end{figure}
+
 PendSV starts in A and ends in B; A notices nothing, since at its next turn steps 4 and 5 give it back exactly the registers it had.
 
 \paragraph{Why may the handler call C without saving \texttt{r0}--\texttt{r3}?} A C function receives its arguments in \texttt{r0}, \texttt{r1}, \texttt{r2}, \dots, returns its result in \texttt{r0}, and may change \texttt{r0}--\texttt{r3}, \texttt{r12} and \texttt{lr}. Nothing of the old task is lost: those registers are in its hardware frame, \texttt{r4}--\texttt{r11} were just pushed (and the C function gives them back unchanged anyway, as the calling rules require), and right after the call all of the new task's registers are restored. And since the handler pushes nothing on MSP, the main stack keeps the \textbf{8-byte alignment} given by the hardware on exception entry, which the C calling rules require when calling a function. \textbf{Warning} (especially for the project): whenever assembly calls C, check very carefully that no register contents are destroyed; the compiler adds instructions to follow the calling convention, and forgetting that they exist leads to strange behaviours.
@@ -804,6 +931,12 @@ Besides step 3 above, it gives the chosen task a fresh slice (\texttt{quantum\_l
 \paragraph{A's slice ends while B is BLOCKED: who runs?} A is first set READY; the scan starts after \texttt{rr\_last = 0} (A): \texttt{k = 1} tries B (BLOCKED), \texttt{k = 2} A itself (READY), so A runs again with a new slice (Unit 1's ``with no other READY task, the running task keeps the CPU''). Not optimised, though: the tick came, PendSV was chained and A saved before the scheduler finds that A must run again, so A is restored: the \textbf{cost of a switch is paid anyway}, although the running task does not change. Optimisations could avoid it (e.g.\ checking whether a switch is really needed before pending PendSV).
 
 \paragraph{A and B both BLOCKED: who runs?} No task is READY, so \texttt{next} stays \texttt{IDLE\_TCB}: the \textbf{idle task} runs. \texttt{rr\_last} does not change, so afterwards the circle goes on where it stopped.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/rr_choice.png}
+    \caption{The three cases of \texttt{task\_switch\_context}. The scan starts after \texttt{rr\_last}: if B is READY it runs; if B is BLOCKED, A runs again, but the switch cost has already been paid; if nobody is READY, the idle task runs.}
+\end{figure}
 
 \subsection{Try it: one switch in gdb}
 Run \texttt{make debug} in \texttt{week-05/base} and, in a second terminal in the same folder, \texttt{arm-none-eabi-gdb build/scratch-os.axf}, with breakpoints on the switch code:
@@ -875,10 +1008,17 @@ Quit gdb with \texttt{quit} (answer \texttt{y}), and QEMU with \texttt{Ctrl-C} i
 
 \subsection{The first run of a task: a fake frame}
 In week 4 a task's first run was a \textbf{fake exception}: \texttt{task\_launch} wrote an 8-word hardware frame on its stack and returned into it, as if from an exception. This now proves useful, since every run of a task is assumed to come from an exception, even the very first; but a first run must now look like a \textbf{full context switch}, because PendSV switches to B, which never ran and was never saved, exactly as it switches back to A (load \texttt{sp}, pop 8 words, set PSP, return). So the fake frame must be \emph{bigger}:
+
 \begin{itemize}
     \item At boot, \texttt{task\_init\_stack} builds on \textbf{every} task's stack what PendSV would have left had the task been switched out just before its first instruction: the 8-word hardware frame \textbf{plus} 8 words for \texttt{r4}--\texttt{r11} below it, with \texttt{t->sp} at the lowest word. The first switch to a task is then identical to every later one (PendSV believes the task was running, finds everything correctly in memory, and the task starts): no special case for a new task.
     \item Only the very first task, A, is entered differently: \texttt{main}'s \texttt{svc \#5} (\texttt{SYS\_START\_TASKS}) ends in \texttt{task\_start\_first} (\texttt{kernel/task.c}), which sets PSP to \texttt{sp + 8}, i.e.\ to the hardware frame, skipping the 8 zeros for \texttt{r4}--\texttt{r11} because the exception return pops only the hardware frame; then it sets nPRIV and returns from SVCall with \texttt{0xFFFFFFFD}, as in week 4.
 \end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/fake_frame.png}
+    \caption{B's stack as \texttt{task\_init\_stack} leaves it at boot: a hardware frame (\texttt{pc} $=$ \texttt{task\_b}, \texttt{lr} $=$ \texttt{task\_exit}, T bit set) plus 8 zero words for \texttt{r4}--\texttt{r11}, with \texttt{B.sp} at the lowest word. B is entered by PendSV like every switch; only A, the very first task, is entered by \texttt{task\_start\_first}, which skips the zeros.}
+\end{figure}
 
 \paragraph{Inspect: \texttt{task\_init\_stack} in \texttt{kernel/task.c}.} \texttt{task\_start\_first} calls it once per task (A, B and idle) before the first task starts, together with week 4's \texttt{partition\_init} and with setting the state to READY. The 16 words for task B (stack top \texttt{0x20001400}) are the ones gdb showed:
 \begin{center}
@@ -894,6 +1034,7 @@ In week 4 a task's first run was a \textbf{fake exception}: \texttt{task\_launch
         \hline
     \end{tabular}
 \end{center}
+
 The heart of the function:
 \begin{lstlisting}[language=C]
     uint32_t *frame = t->stack_top - 8;   /* the hardware frame: 8 words below the top */
@@ -903,6 +1044,7 @@ The heart of the function:
         regs[i] = 0;                      /* r4 + i = 0 */
     t->sp = regs;                         /* the saved stack pointer */
 \end{lstlisting}
+
 \begin{itemize}
     \item B's saved \texttt{sp} is \texttt{0x200013c0}: 16 words are 64 bytes (\texttt{0x40}), and \texttt{0x20001400} $-$ \texttt{0x40} $=$ \texttt{0x200013c0}.
     \item \texttt{r4}--\texttt{r11} may start as 0: a C function never reads them before writing them (it only saves and restores them for its caller), so any value works for a task's first instruction.
@@ -1165,11 +1307,18 @@ At the latest the next SysTick, 10\,ms away, wakes the CPU from \texttt{wfi}: \t
     task A exited (tick 55)
     all tasks finished
 \end{verbatim}
+
 \begin{itemize}
     \item A drifts: steps at 0, 11, 22, 33, 44, a period of 11 $=$ 1 tick of work $+$ 10 of delay; it exits at 55, after its last delay.
     \item B does not: \texttt{last} starts at 1, and B wakes at 7, 13, 19, 25, 31, exactly every 6 ticks, despite its 1 tick of work.
     \item Most of the time both tasks are BLOCKED and the idle task runs, until the tick at which a task wakes up.
 \end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/delay_idle.png}
+    \caption{\texttt{DEMO=idle} tick by tick. A (\texttt{task\_delay(10)}) runs every 11 ticks, because its work adds to the delay: it drifts. B (\texttt{task\_delay\_until}, period 6) wakes exactly every 6 ticks. In between, the idle task runs and gives way at once when a task wakes up.}
+\end{figure}
 
 \subsection{Seeing the schedule: a trace}
 The output shows when each step \emph{ended}, not who had the CPU at each tick. To check that many tasks run correctly, and to draw Unit 1's Gantt chart of a real run, the kernel must log its execution, \textbf{writing down every switch}. Logging inside an OS is hard: \texttt{printf} cannot simply be added anywhere, and where it can it is very slow, so in the scheduler, which must be fast, it would completely destroy the timing of the tasks. The trace is therefore ``smart'': events are logged in memory and printed later, when there is time. \texttt{week-05/solution/} has it; the next subsections write it in \texttt{week-05/base/}, at its \texttt{CLASS} comments. The design:
@@ -1272,6 +1421,12 @@ Two helpers read the ring oldest first; they go right \textbf{above} the comment
 \end{lstlisting}
 \texttt{stored()} is the number of records written, at most 64. Until the ring is full (\texttt{count} $< 64$) the oldest record is number 0, in slot 0; once it is full (\texttt{count} $\ge 64$), the oldest stored record is number \texttt{count} $- 64$, in slot $(\texttt{count} - 64) \bmod 64 = \texttt{count} \bmod 64$, the slot the next record will overwrite. \texttt{oldest\_plus( 0 )} finds it in both cases, and \texttt{oldest\_plus( i )} is the record $i$ places after it.
 
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/trace_ring.png}
+    \caption{The ring buffer, drawn with 8 slots. Before it is full, the oldest record is in slot 0. Once it has wrapped, the oldest record is in the slot that the next write will overwrite, \texttt{count \% SIZE}: \texttt{oldest\_plus(0)} finds it in both cases.}
+\end{figure}
+
 In \texttt{trace\_print}, right \textbf{above} the comment \texttt{/* CLASS: trace\_print body goes here */} (which also stays for later), a first part prints the raw records in the format \texttt{schedsim} reads:
 \begin{lstlisting}[language=C]
     /* Part 1: the raw records, for the course tool. */
@@ -1284,11 +1439,13 @@ In \texttt{trace\_print}, right \textbf{above} the comment \texttt{/* CLASS: tra
     }
     kprintf( "TRACE END %u\n", tick_count );
 \end{lstlisting}
+
 \texttt{tasks[]} turns the indexes back into names, which is why the task table is not \texttt{static}; \texttt{trace\_print} runs inside SVCall, privileged, so it uses the kernel's \texttt{kprintf}. Now run, save what QEMU prints (\texttt{tee} shows the output \textbf{and} copies it into a file), quit QEMU with \texttt{Ctrl-C} after \texttt{all tasks finished}, and draw the result with the course tool:
 \begin{lstlisting}[language=bash]
     make run | tee run.log
     python3 ../../../course-material/tools/schedsim/schedsim.py trace run.log
 \end{lstlisting}
+
 The path assumes \texttt{scratch-os} and \texttt{course-material} side by side, as in the course repository; \texttt{schedsim trace} reads only the lines between \texttt{TRACE BEGIN} and \texttt{TRACE END}, ignoring the rest. The end of the run:
 \begin{verbatim}
     B: step 15 (tick 44)
@@ -1304,6 +1461,7 @@ The path assumes \texttt{scratch-os} and \texttt{course-material} side by side, 
     task B exited (tick 44)
     all tasks finished
     \end{verbatim}
+
 and the output of the tool:
     \begin{verbatim}
     trace: ticks 5..44 (39 ticks, 7 switches); time 0 = tick 5
@@ -1314,6 +1472,7 @@ and the output of the tool:
     CPU    BBBBBAAAAABBBBBAAAAABBBBBAABBBBBBBBBBBB
     schedule=BBBBBAAAAABBBBBAAAAABBBBBAABBBBBBBBBBBB
 \end{verbatim}
+
 \begin{itemize}
     \item 7 switches: one every 5 ticks (each \texttt{\#} block is 5 ticks wide, the quantum), plus \texttt{T 32 A B} when A exits in the middle of its slice. Afterwards B's slices end, but B is the only READY task and keeps the CPU, so no record is written. \texttt{TRACE END 44} is \texttt{tick\_count} when B called \texttt{trace\_dump()}.
     \item \textbf{Does the trace know who ran before the first record? No}: the chart starts at tick 5 (\texttt{time 0 = tick 5}), although A ran from tick 0, because the first record is the first information the trace has.
@@ -1454,7 +1613,8 @@ For \texttt{DEMO=idle}, the output can also be saved with \texttt{| tee idle.log
 \end{itemize}
 
 
-\section{Real-time basics}
+
+\section{Unità 3 - Real-time basics}
 From this lecture to the end of next week the topic is \textbf{real-time scheduling}: a step beyond the general scheduling of previous OS courses, somewhat more complex but very important for embedded systems, where many applications have real-time constraints.
 
 \subsection{Real-time systems}
@@ -2038,6 +2198,409 @@ In breve: prima \emph{che cosa} significa schedulare, poi \emph{come} lo fa davv
 
 \subsection{Unità 1}
 
+\paragraph*{L'idea.} Una CPU esegue un'istruzione alla volta: il kernel \textbf{alterna} i task (A, poi B, poi A) e lo \textbf{scheduler} decide a chi tocca. Bisogna sapere \emph{chi} può girare (gli stati), \emph{che cosa} il kernel ricorda di ogni task (il TCB), \emph{quando} si decide e \emph{come}.
+
+\subsubsection*{Task, context switch e scheduler}
+Un \textbf{programma} è codice fermo; un \textbf{processo} è un programma in esecuzione (codice, dati, stack, registri). Un \textbf{task} embedded ha stack e registri suoi, ma vive in un \emph{unico} eseguibile con il kernel, senza spazio di indirizzamento privato. Passare da A a B è un \textbf{context switch}: si salva tutto lo stato della CPU di A e si carica quello di B, e A non se ne accorge. La \textbf{politica} (l'algoritmo) è solo la regola di scelta, poche righe di C; il context switch, invece, dipende dall'hardware ed è la parte difficile (Unità 2).
+
+\subsubsection*{Stati e transizioni}
+\begin{itemize}
+    \item \textbf{RUNNING}: ha la CPU; al massimo uno per core.
+    \item \textbf{READY}: gli manca solo la CPU.
+    \item \textbf{BLOCKED}: aspetta un evento (delay, dati, I/O).
+    \item \textbf{FINISHED}: ha chiamato \texttt{exit}.
+\end{itemize}
+Si passa da READY a RUNNING quando lo scheduler lo sceglie. Da RUNNING si torna a READY per preemption o yield, si va in BLOCKED quando si aspetta, in FINISHED con \texttt{exit}. \textbf{Regola d'oro}: da BLOCKED si va solo in READY, \emph{mai} direttamente in RUNNING.
+
+\subsubsection*{Forma dei task e TCB}
+Un task embedded è \textbf{run to completion} (setup, lavoro, \texttt{exit}) oppure un \textbf{ciclo infinito} (setup, poi per sempre: aspetta un evento, lavora). Il ciclo infinito è il caso più comune, e mentre il task è BLOCKED lascia la CPU agli altri.
+
+Il \textbf{TCB} è la scheda del task. Contiene lo \textbf{SP salvato} (dove sono i registri, sul suo stack), lo \textbf{stato}, l'\textbf{identità} (nome, funzione, limiti di stack e partizione), le \textbf{info di scheduling} (priorità, tick di risveglio) e il puntatore al \textbf{TCB successivo}, per costruire le code. I TCB stanno in un array (fisso) o in una lista (dinamica).
+
+\subsubsection*{Quando gira lo scheduler}
+Non è un task: è una funzione del kernel, chiamata al boot e in quattro punti:
+
+\begin{enumerate}
+    \item il \textbf{tick}, l'interrupt periodico: conta il quanto, può togliere la CPU e sveglia i delay scaduti;
+    \item una \textbf{chiamata bloccante};
+    \item uno \textbf{yield};
+    \item un \textbf{exit}.
+\end{enumerate}
+Attenzione: svegliare un task \emph{non} chiama lo scheduler. Il task diventa READY e aspetta il prossimo punto di attivazione.
+
+\paragraph*{Preemptive o cooperativo.} Un kernel \textbf{preemptive} toglie la CPU anche senza il consenso del task: è reattivo, ma i dati condivisi vanno protetti. Uno \textbf{cooperativo} aspetta che il task blocchi, ceda o termini: è semplice, ma un solo loop infinito congela tutto. Avere interrupt non significa avere preemption.
+
+\paragraph*{Esercizio ``segui due task''.} A ogni evento chiediti:
+\begin{itemize}
+    \item che cosa succede a chi gira;
+    \item se qualcuno si sveglia (e allora diventa solo READY);
+    \item chi sceglie lo scheduler.
+\end{itemize}
+Le due trappole: la fine del quanto non toglie la CPU se nessun altro è READY, e READY non vuol dire RUNNING.
+
+\subsubsection*{Metriche}
+Un task arriva in $a$, gli servono $C$ unità di CPU, parte in $s$ e finisce in $f$.
+\begin{center}
+    \begin{tabular}{l l l l}
+        \hline
+        \textbf{metrica} & \textbf{formula} & \textbf{obiettivo} & \textbf{significato} \\
+        \hline
+        utilizzo & occupata / totale & max & quanto lavora la CPU \\
+        throughput & task finiti / tempo & max & lavoro prodotto in tutto \\
+        turnaround & $f-a$ & min & dalla richiesta alla fine \\
+        waiting & $f-a-C$ & min & tempo passato READY \\
+        response & $s-a$ & min & attesa prima di partire (il ``lag'') \\
+        \hline
+    \end{tabular}
+\end{center}
+La \textbf{fairness} chiede che la CPU sia divisa in modo equo e che nessuno aspetti per sempre. Le metriche sono in conflitto, quindi si confrontano le \textbf{medie}. Nel real-time, invece, si chiama ``response time'' la quantità $f-a$.
+
+\subsubsection*{Regole degli esercizi (anche all'esame)}
+\begin{itemize}
+    \item Lo schedule si scrive come stringa, con \texttt{.} per la CPU ferma.
+    \item Lo slot $t$ va da $t$ a $t+1$: chi gira negli slot 0--5 finisce a \textbf{6}.
+    \item Il costo dello switch si ignora.
+    \item \textbf{Parità}: chi gira tiene la CPU; altrimenti vince la lettera più bassa.
+    \item \textbf{Priorità}: numero più alto vuol dire priorità più alta.
+    \item \textbf{Round robin}: chi arriva nell'istante in cui scade il quanto entra in coda prima del task interrotto.
+\end{itemize}
+
+\subsubsection*{Gli algoritmi}
+\paragraph*{FCFS.} Coda in ordine di arrivo; ogni task gira fino alla fine (non-preemptive). Il difetto è l'\textbf{effetto convoglio}: i task corti aspettano dietro quello lungo. Con gli stessi tre task, l'attesa media è 3.67 se il lungo arriva per primo e 0.33 se arriva per ultimo. Qui waiting e response coincidono.
+
+\paragraph*{Round Robin.} Coda FIFO. Il task in testa gira al massimo per un quanto $q$; se il quanto scade, torna in fondo alla coda. Se finisce prima, parte subito il successivo. L'attesa è limitata: al massimo $(n-1)q$.
+\begin{itemize}
+    \item $q$ piccolo: buona response, ma molti switch.
+    \item $q$ grande: pochi switch, ma attese lunghe; con $q$ più lungo di ogni task diventa FCFS.
+\end{itemize}
+Lo switch è puro spreco: l'overhead è $s/(q+s)$. Con $s=10\,\mu s$ e $q=1\,ms$ si perde circa l'1\%; con $q=10\,\mu s$ il 50\%.
+
+\paragraph*{Priorità.} Gira il task READY più importante; il kernel tiene una lista per ogni livello. Solo un task con priorità \emph{strettamente} maggiore toglie la CPU a chi gira. Le priorità sono statiche o dinamiche. FreeRTOS usa priorità più round robin tra i pari. Il rischio è la \textbf{starvation}: i task poco importanti possono non girare mai. Il rimedio è l'\textbf{aging}: la priorità cresce con l'attesa.
+
+\begin{center}
+    \begin{tabular}{l c l l}
+        \hline
+        & \textbf{preemptive} & \textbf{pro} & \textbf{contro} \\
+        \hline
+        FCFS & no & semplicissimo & effetto convoglio \\
+        Round Robin & sì & attesa limitata & scelta del quanto \\
+        Priorità & sì & i task importanti subito & starvation \\
+        \hline
+    \end{tabular}
+\end{center}
+
+\paragraph*{Metodo per gli esercizi.}
+\begin{enumerate}
+    \item A ogni istante guarda chi arriva, chi finisce e se scade il quanto.
+    \item Applica l'algoritmo e le regole di parità, e scrivi la stringa.
+    \item Ricava $s$ e $f$ ($f$ = ultimo slot $+1$) e calcola metriche e medie.
+\end{enumerate}
+Nel mondo reale FCFS resiste nei piccoli dispositivi, le priorità dominano il real-time e i sistemi general-purpose usano il round robin con molte aggiunte.
+
 \subsection{Unità 2}
+\paragraph*{L'obiettivo.} Nella settimana 4 lo scratch-OS eseguiva A fino alla fine e poi B. Ora A e B si \textbf{alternano} con un round robin preemptive: ogni task gira per un quanto, poi tocca all'altro. Serve quindi un \textbf{context switch} vero: fermare un task in un punto qualsiasi e riprenderlo più tardi esattamente da lì. Questo codice è la \textbf{base del progetto}, che cambierà solo il modo in cui un task parte (un programma in FLASH copiato in RAM all'avvio). Nella cartella \texttt{base/} lo scheduler è già completo e manca solo il trace; \texttt{solution/} contiene anche il trace.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/u2_file_paths.png}
+    \caption{L'intera unità in cinque percorsi. All'avvio parte il primo task; il tick o una system call \emph{chiedono} uno switch impostando il bit \texttt{PENDSVSET}; PendSV lo \emph{esegue} (salva, sceglie, sposta la finestra MPU, registra nel trace, ripristina); \texttt{trace\_dump} stampa il trace.}
+\end{figure}
+
+\subsubsection*{1. Che cosa salvare per mettere in pausa un task}
+Per riprendere A come se niente fosse servono tre cose: i suoi \textbf{registri}, il suo \textbf{stack} e i suoi \textbf{diritti di memoria}. Lo stack non richiede nulla: ogni task ha il suo, nella propria partizione protetta dall'MPU. Il lavoro di salvataggio dei registri è diviso tra hardware e kernel:
+\begin{center}
+\small
+\begin{tabular}{l l l}
+    \hline
+    \textbf{cosa} & \textbf{chi lo salva, e dove} & \textbf{chi lo ripristina} \\
+    \hline
+    \texttt{r0}--\texttt{r3}, \texttt{r12}, \texttt{lr}, \texttt{pc}, \texttt{xPSR} & la CPU, all'ingresso nell'eccezione, sullo stack del task (PSP) & la CPU, al ritorno \\
+    \texttt{r4}--\texttt{r11} & PendSV (\texttt{stmdb}), sullo stack, sotto il frame & PendSV (\texttt{ldmia}) \\
+    SP (PSP) & PendSV, nel campo \texttt{sp} del TCB & PendSV (\texttt{msr psp}) \\
+    diritti di memoria & non si salvano: si ricalcolano & \texttt{task\_switch\_context} (MPU, region 1) \\
+    \hline
+\end{tabular}
+\end{center}
+Perché la CPU non salva \texttt{r4}--\texttt{r11}? Per le regole del C ogni funzione li restituisce intatti al chiamante, quindi per un interrupt normale non serve. Uno switch, però, ritorna in un \emph{altro} task: il kernel deve salvare quelli del vecchio task e caricare quelli del nuovo. Alla fine tutto lo stato del task sta sul suo stack, e nel TCB basta un puntatore.
+
+\subsubsection*{2. Il TCB e la tabella dei task}
+La \texttt{struct task} della settimana 4 diventa \texttt{struct tcb}, con tre campi nuovi:
+\begin{itemize}
+    \item \texttt{sp}: lo SP salvato;
+    \item \texttt{state}: READY, RUNNING, BLOCKED o FINISHED;
+    \item \texttt{wake\_tick}: il tick di risveglio di un task bloccato.
+\end{itemize}
+Restano i campi di prima: nome, funzione d'ingresso, cima dello stack, limiti della partizione e posizione delle variabili.
+
+\textbf{\texttt{sp} deve essere il primo campo.} L'assembly non conosce le struct: con \texttt{sp} all'offset 0, \texttt{ldr r0, [r2]} legge lo SP direttamente dal puntatore al TCB. Se fosse primo \texttt{name}, PendSV userebbe come stack l'indirizzo in FLASH della stringa e il sistema andrebbe in crash, senza alcun warning in compilazione.
+
+La tabella \texttt{tasks[]} contiene A, B e idle, in quest'ordine. \texttt{NUM\_TASKS} vale 3, \texttt{NUM\_APP\_TASKS} vale 2 e \texttt{IDLE\_TCB} è l'ultima voce. La tabella non è più \texttt{const}, perché \texttt{sp}, \texttt{state} e \texttt{wake\_tick} cambiano a run time.
+
+\subsubsection*{3. Chi fa lo switch: PendSV}
+Uno switch può servire alla fine di un quanto (nel tick) o a una system call (yield, delay, exit). Copiare il codice dello switch in ogni handler sarebbe un errore. La soluzione: ogni handler si limita a \textbf{chiedere} lo switch, e un solo handler lo \textbf{esegue}.
+\begin{itemize}
+    \item \textbf{Chiedere}: \texttt{task\_request\_switch} scrive 1 nel bit \texttt{PENDSVSET} (bit 28) dell'ICSR (\texttt{0xE000ED04}). Basta una store semplice, perché scrivere 0 negli altri bit non ha effetto. Due richieste insieme costano un solo switch.
+    \item \textbf{Priorità}: fault \texttt{0x00}, SVCall \texttt{0x80}, UART \texttt{0xC0}, SysTick e PendSV \texttt{0xE0} (la meno urgente). Quindi PendSV non interrompe mai un handler: parte \textbf{in tail-chaining}, appena l'ultimo handler finisce, subito prima del ritorno al task.
+    \item \textbf{Conseguenze}: PendSV interrompe sempre un \emph{task}, quindi PSP è proprio lo stack di quel task. Inoltre un tick non può spezzare a metà uno switch, perché SysTick ha la stessa priorità. Fare lo switch dentro SysTick sarebbe pericoloso: se il tick interrompe un handler di un dispositivo, quell'handler tornerebbe nel task sbagliato.
+\end{itemize}
+
+\subsubsection*{4. Lo switch, passo per passo (13 istruzioni)}
+I numeri sono quelli del primo switch, al tick 5:
+\begin{enumerate}
+    \item \textbf{Ingresso}: il frame hardware di A è già sul suo stack, spinto dalla CPU quando è entrato SysTick. PSP $=$ \texttt{0x200003B8}.
+    \item \textbf{Salva A}: \texttt{mrs r0, psp}, poi \texttt{stmdb r0!, \{r4-r11\}} (r0 $=$ \texttt{0x20000398}), poi \texttt{str r0, [tcb\_current]}, cioè \texttt{A.sp = r0}.
+    \item \textbf{Scegli}: \texttt{bl task\_switch\_context}. A diventa READY, viene scelto B, \texttt{tcb\_current = B} e l'MPU region 1 si sposta sulla partizione di B.
+    \item \textbf{Ripristina B}: rilegge \texttt{tcb\_current}, carica \texttt{B.sp} (\texttt{0x200013C0}), \texttt{ldmia r0!, \{r4-r11\}}, poi \texttt{msr psp, r0}: ora PSP $=$ \texttt{0x200013E0}, il frame di B.
+    \item \textbf{Ritorna}: \texttt{bx 0xFFFFFFFD} (thread mode, PSP). La CPU estrae il frame di B e B riparte dall'istruzione in cui si era fermato.
+\end{enumerate}
+
+Alcuni dettagli da sapere:
+\begin{itemize}
+    \item \textbf{Chiamare il C dall'handler è sicuro}: \texttt{r0}--\texttt{r3} sono già nel frame, \texttt{r4}--\texttt{r11} sono appena stati salvati, e MSP resta allineato a 8 byte. In generale, però, quando l'assembly chiama il C bisogna controllare attentamente quali registri vengono distrutti.
+    \item \textbf{L'\texttt{lr} di ingresso non si salva}: per tornare a un task serve sempre \texttt{0xFFFFFFFD}.
+    \item \textbf{\texttt{tcb\_current} si legge due volte}, perché la funzione C lo cambia.
+    \item \textbf{\texttt{CONTROL} non si tocca}: nPRIV resta impostato, quindi tutti i task restano unprivileged.
+    \item \textbf{L'UART può interrompere PendSV senza danni}, perché non tocca né PSP né i TCB.
+\end{itemize}
+
+\subsubsection*{5. Il primo avvio: il frame finto}
+B non ha mai girato, ma PendSV lo tratta come qualunque altro task: carica \texttt{sp}, estrae 8 word, imposta PSP e ritorna. Per questo al boot \texttt{task\_init\_stack} prepara su \emph{ogni} stack 16 word, come se il task fosse stato fermato appena prima della sua prima istruzione:
+\begin{itemize}
+    \item il frame hardware: \texttt{pc} $=$ \texttt{entry \& \textasciitilde 1} (indirizzo reale dell'istruzione), \texttt{lr} $=$ \texttt{task\_exit}, \texttt{xPSR} $=$ \texttt{0x01000000} (bit T obbligatorio), gli altri registri a 0;
+    \item sotto il frame, 8 zeri per \texttt{r4}--\texttt{r11} (vanno bene, perché il C non li legge prima di averli scritti);
+    \item \texttt{sp} $=$ cima $-$ 64 byte: per B, \texttt{0x20001400} $-$ \texttt{0x40} $=$ \texttt{0x200013C0}.
+\end{itemize}
+Così il primo switch verso un task è identico a tutti gli altri. Solo A, il primissimo task, entra in un altro modo: \texttt{main} esegue \texttt{svc \#5}, e \texttt{task\_start\_first} imposta PSP $=$ \texttt{sp} $+$ 8 word (salta gli zeri), imposta nPRIV e ritorna con \texttt{0xFFFFFFFD}. Quando una funzione task ritorna, finisce in \texttt{task\_exit}, cioè fa exit.
+
+\subsubsection*{6. Scegliere il prossimo task: \texttt{task\_switch\_context}}
+Non c'è una coda: la tabella stessa è il cerchio. La funzione:
+\begin{itemize}
+    \item rimette in READY il vecchio task, se era RUNNING;
+    \item scorre \texttt{(rr\_last + k) \% NUM\_APP\_TASKS} per $k = 1, 2$ e prende il primo task READY (i BLOCKED e i FINISHED vengono saltati);
+    \item se non trova nessuno, sceglie idle, che non entra mai nel cerchio, e \texttt{rr\_last} non cambia;
+    \item dà al task scelto un quanto nuovo (\texttt{quantum\_left = QUANTUM}), aggiorna \texttt{tcb\_current} e sposta la finestra MPU;
+    \item se il task è davvero cambiato, registra lo switch nel trace.
+\end{itemize}
+Un caso da notare: se il quanto di A finisce mentre B è BLOCKED, viene rieletto A, ma il costo dello switch (salvataggio e ripristino) è già stato pagato. Con \texttt{malloc} si potrebbe usare una lista di READY, ma questo sistema operativo non ha memoria dinamica.
+
+\subsubsection*{7. Il tick: \texttt{task\_increment\_tick}}
+SysTick scatta ogni 10\,ms e il quanto si conta in tick, quindi deve essere un multiplo del tick. A ogni tick:
+\begin{enumerate}
+    \item \texttt{tick\_count++}. Finché nessun task è partito, la funzione si ferma qui.
+    \item Ogni task BLOCKED il cui \texttt{wake\_tick} è arrivato diventa READY. Il confronto è \texttt{(int32\_t)(tick\_count - wake\_tick) >= 0}, che resta corretto anche quando il contatore ricomincia da 0 (dopo $2^{32}$ tick, circa 497 giorni).
+    \item Se gira idle, si chiede uno switch \emph{solo} se qualche task si è svegliato.
+    \item Altrimenti si decrementa \texttt{quantum\_left}; quando arriva a 0, si chiama \texttt{task\_request\_switch()}.
+\end{enumerate}
+Con \texttt{QUANTUM = 0}, \texttt{\#if} elimina tutto il codice del quanto e lo scheduler diventa \textbf{cooperativo}. Un task svegliato non parte subito: aspetta la fine del quanto di chi sta girando. Il quanto non segue una griglia globale: parte nel momento in cui il task ottiene la CPU.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/u2_scheduler_logic.png}
+    \caption{Tutto lo scheduler in due funzioni. \texttt{task\_increment\_tick} conta il tempo, sveglia i task e decide se \emph{chiedere} uno switch; \texttt{task\_switch\_context}, dentro PendSV, \emph{sceglie} il task successivo nel cerchio oppure idle, poi sposta l'MPU e registra lo switch nel trace.}
+\end{figure}
+
+\subsubsection*{8. Cedere la CPU: le system call}
+Ogni system call è un \texttt{svc}; il suo servizio in \texttt{kernel/syscall.c} chiede uno switch se serve, e PendSV parte in tail-chaining appena SVCall finisce.
+\begin{itemize}
+    \item \textbf{\texttt{task\_yield()}} (\texttt{svc \#6}): il task resta READY e torna in fondo al cerchio.
+    \item \textbf{\texttt{task\_delay(n)}} (\texttt{svc \#7}): il task è BLOCKED fino a ``adesso $+\,n$''; \texttt{delay(0)} equivale a uno yield. Il tempo del lavoro si somma all'attesa, quindi un task periodico \textbf{deriva}.
+    \item \textbf{\texttt{task\_delay\_until(\&last, T)}} (\texttt{svc \#8}): il task si sveglia a \texttt{last + T} e \texttt{last} avanza di $T$, quindi il periodo resta esatto, \textbf{senza deriva}. Il kernel \emph{scrive} \texttt{*last}, perciò prima controlla che l'indirizzo stia nella partizione del chiamante e sia allineato. Se il task è in ritardo non si blocca e recupera subito.
+    \item \textbf{exit}: \texttt{task\_finish\_current} rende il task FINISHED e chiede uno switch. Quando resta solo idle stampa \texttt{all tasks finished}; \texttt{main} non riprende mai il controllo.
+\end{itemize}
+Entrambi i delay passano per \texttt{task\_block\_until}, che imposta \texttt{wake\_tick}, mette lo stato a BLOCKED e chiede lo switch. Quando il task viene scelto di nuovo, riprende subito dopo l'\texttt{svc} e lo stub ritorna al chiamante.
+
+Ogni transizione di stato corrisponde a una riga di codice:
+\begin{itemize}
+    \item READY $\leftrightarrow$ RUNNING in \texttt{task\_switch\_context};
+    \item $\to$ BLOCKED in \texttt{task\_block\_until};
+    \item BLOCKED $\to$ READY in \texttt{task\_increment\_tick};
+    \item $\to$ FINISHED in \texttt{task\_finish\_current}.
+\end{itemize}
+Non esiste BLOCKED $\to$ RUNNING.
+
+\subsubsection*{9. Il task idle}
+Quando nessun task applicativo è READY gira \texttt{idle\_task}, un ciclo infinito di \texttt{wfi}: la CPU dorme fino al prossimo interrupt e risparmia energia.
+\begin{itemize}
+    \item È un task come gli altri: unprivileged, con la sua partizione di 4\,KB (\texttt{0x20002000}). Switch, MPU e stack non hanno casi speciali.
+    \item Non ha quanto e non entra nel cerchio: lo si lascia solo quando qualcuno si sveglia.
+    \item Perché non un ciclo dentro il kernel? Un handler che cicla bloccherebbe SysTick e PendSV: niente più tick, risvegli né switch.
+\end{itemize}
+
+\subsubsection*{10. Le prove}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/u2_run.png}
+    \caption{\texttt{make run} dall'inizio alla fine: A e B si alternano ogni 5 tick, A termina al tick 32, B stampa il trace e termina al 44, poi gira idle per sempre.}
+\end{figure}
+\begin{itemize}
+    \item \textbf{\texttt{make run}}: dopo ogni turno, A stampa il passo \emph{subito} (ai tick 10, 20, 30), perché \texttt{spin\_ticks} conta i tick dell'orologio e non il proprio tempo di CPU.
+    \item \textbf{\texttt{QUANTUM=2}}: un passo per turno, A termina al 40 e B al 50, con 21 switch invece di 7. È l'overhead $s/(q+s)$ dell'Unità 1 visto dal vivo.
+    \item \textbf{\texttt{DEMO=rogue}}: dopo uno switch, B scrive su \texttt{uptime\_ms} nella RAM del kernel e scatta MemManage (\texttt{CFSR=0x82}, indirizzo \texttt{0x20003094}). L'isolamento della settimana 4 regge anche dopo gli switch.
+    \item \textbf{\texttt{DEMO=coop}}: con \texttt{QUANTUM=0} e nessuno yield, B non gira mai (starvation). Serve uno \texttt{task\_yield()} nei cicli di \emph{entrambi} i task.
+    \item \textbf{\texttt{DEMO=idle}}: A (\texttt{delay(10)}) gira ai tick 0, 11, 22, 33, 44 e deriva; B (\texttt{delay\_until}, periodo 6) gira ai tick 7, 13, 19, 25, 31; idle riempie i buchi.
+    \item \textbf{gdb}: le variabili del kernel si leggono solo da fermi dentro un handler. In thread mode anche le letture di gdb passano dall'MPU con i diritti del task.
+\end{itemize}
+
+\subsubsection*{11. Il trace}
+Un \texttt{printf} dentro lo scheduler è lentissimo e cambierebbe proprio lo schedule da osservare. Perciò si \textbf{registra in RAM} e si \textbf{stampa dopo}.
+\begin{itemize}
+    \item \textbf{Record}: \texttt{\{tick, from, to\}} occupa 8 byte (6 più 2 di padding). Si scrive in \texttt{task\_switch\_context} solo se \texttt{next != old}; l'indice di un task è \texttt{old - tasks}, una differenza tra puntatori che conta elementi.
+    \item \textbf{Ring buffer} di 64 record: \texttt{count} conta tutti i record scritti, e il prossimo va nello slot \texttt{count \% 64}. \texttt{stored()} vale al massimo 64; \texttt{oldest\_plus(i)} $=$ \texttt{buffer[(count - stored() + i) \% 64]}. Quando il buffer è pieno, il record più vecchio sta proprio nello slot che verrà sovrascritto.
+    \item \textbf{Stampa}: \texttt{trace\_dump()} (\texttt{svc \#9}) chiama \texttt{trace\_print}, che usa \texttt{kprintf}. Escono \texttt{TRACE BEGIN}, le righe \texttt{T tick from to}, \texttt{TRACE END}, e poi il Gantt: \texttt{owner\_at(t)} è il \texttt{to} dell'ultimo record con tick $\le t$, le righe sono da 64 tick, e il controllo \texttt{stored() > 0} evita di disegnare dati mai scritti. \texttt{schedsim trace} legge le stesse righe.
+    \item \textbf{Nessun lock}: PendSV, che scrive, e SVCall, che legge, non si interrompono mai a metà.
+    \item \textbf{Limiti}: il trace non sa chi girava prima del primo record. Lo switch B $\to$ idle avviene dopo la stampa. Con due record allo stesso tick, il Gantt mostra l'ultimo.
+\end{itemize}
+
+\paragraph*{La lezione.} Un sistema operativo è fatto di tante parti piccole e semplici che lavorano insieme; il difficile è collegarle bene e tenere sotto controllo ogni evento possibile. I bug grandi fanno crashare subito il sistema e si correggono; il vero incubo sono quelli piccoli, che emergono solo in rari casi limite.
+
+
 
 \subsection{Unità 3}
+
+\paragraph*{L'idea.} Finora uno scheduler doveva essere ``buono in media''. Da qui in poi conta altro: \textbf{ogni} task deve finire \textbf{entro una scadenza}. È lo scheduling \textbf{real-time}, fondamentale nei sistemi embedded, perché controllano qualcosa di fisico (freni, motori, valvole) che non aspetta.
+
+\subsubsection*{1. Corretto \emph{e} puntuale}
+Un programma normale deve solo dare il risultato giusto, prima o poi. Un sistema real-time deve dare il risultato giusto \textbf{entro} $t + d$, dove $d$ è la \textbf{deadline} fissata in anticipo. Un risultato giusto ma in ritardo vale quanto un risultato sbagliato. Esempio: il comando dei freni deve agire entro pochi millisecondi; un comando perfetto che arriva 100\,ms dopo è inutile.
+
+\paragraph*{Hard, firm, soft.} La classe dipende dalla \textbf{conseguenza} di una deadline mancata, non da quanto è corta (l'airbag a 30\,ms è hard, un frame video a 40\,ms è firm):
+\begin{itemize}
+    \item \textbf{hard}: la conseguenza è catastrofica (airbag, freni, pacemaker, motori di un drone);
+    \item \textbf{firm}: il risultato in ritardo è inutile e si \textbf{butta}, ma non fa danni (un frame video, un campione audio);
+    \item \textbf{soft}: il risultato in ritardo è \textbf{ancora utile}, solo peggiore (contapassi, correttore ortografico, orologio dello smartwatch).
+\end{itemize}
+In un sistema hard bisogna \textbf{dimostrare} prima dell'esecuzione che ogni deadline sarà rispettata: i test mostrano solo i casi provati. Un sistema reale spesso mescola le tre classi (un'auto ha freni hard, fusione dei sensori firm, infotainment soft). Nel corso, ``task real-time'' significa hard. I sistemi desktop non sono real-time; per l'hard real-time serve un \textbf{RTOS}, piccolo e pieno di vincoli.
+
+\subsubsection*{2. Real-time non vuol dire veloce}
+Un sistema \textbf{veloce} ottimizza una \textbf{media} (throughput, turnaround medio). Un sistema \textbf{real-time} garantisce \textbf{ogni singolo task}, anche nel caso peggiore, a costo di rallentarne qualcuno. Conta la \textbf{prevedibilità}: sapere in anticipo quando finirà ogni task. Una CPU più veloce aiuta, ma non garantisce niente: decide lo scheduling.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/u3_fast_vs_ontime.png}
+    \caption{Gli stessi tre job con due scelte di priorità. A sinistra si privilegiano i job corti: la media è migliore (3), ma A finisce a 6 e manca la deadline 5. A destra si privilegia il job urgente: la media è peggiore (5), ma tutte le deadline sono rispettate.}
+\end{figure}
+
+\subsubsection*{3. Tre tipi di task}
+Un task real-time è una sequenza infinita di \textbf{job}: ogni job è un giro del ciclo infinito dell'Unità 1.
+\begin{itemize}
+    \item \textbf{Periodico}: un job ogni $T$ (es.\ leggere la temperatura ogni 25\,ms, in polling). Le attivazioni sono prevedibili, quindi si può \textbf{dimostrare a priori} che tutte le deadline saranno rispettate. Nel corso la deadline coincide sempre con la fine del periodo.
+    \item \textbf{Sporadico}: attivato da eventi in istanti ignoti, ma con un \textbf{intervallo minimo} tra due job. Esempio: un calcolo a ogni giro dell'albero motore; a 6000 RPM un giro dura $60\,s/6000 = 10$\,ms. Nel caso peggiore si comporta come un periodico con $T$ uguale a quell'intervallo minimo.
+    \item \textbf{Aperiodico}: eventi senza alcun intervallo minimo, anche due nello stesso istante (es.\ un pulsante sul cruscotto). Non si può garantire nulla, si può solo ridurre la probabilità di mancare le deadline.
+\end{itemize}
+Conseguenza di progetto: ciò che non deve \emph{mai} mancare una deadline va reso periodico quando possibile. Il polling trasforma un evento in un task periodico, ma spreca CPU; gli interrupt sono efficienti, ma meno prevedibili.
+
+\subsubsection*{4. Il modello e la notazione}
+Le garanzie valgono solo se il modello è rispettato:
+\begin{itemize}
+    \item i task sono in numero \textbf{fisso} e noti in anticipo;
+    \item sono tutti \textbf{periodici};
+    \item sono \textbf{indipendenti}: niente risorse condivise, nessuno aspetta un altro;
+    \item la deadline relativa è uguale al periodo: $D = T$;
+    \item ogni task ha un \textbf{WCET} $C$ noto;
+    \item l'overhead del kernel (es.\ il context switch) è trascurabile;
+    \item c'è \textbf{una sola CPU} (nei multi-core embedded ogni core è una CPU indipendente, con task assegnati staticamente).
+\end{itemize}
+
+Per il job $k$ di un task:
+\begin{center}
+    \small
+    \begin{tabular}{l l}
+        \hline
+        rilascio & $a = \Phi + (k-1)\,T$ \quad (fase $\Phi$, di solito 0) \\
+        deadline assoluta & $d = a + D = a + T$ \quad (coincide con il rilascio successivo) \\
+        inizio e fine & $s$, $f$ \quad (in generale $f \ne s + C$, perché il job può essere interrotto) \\
+        tempo di risposta & $R = f - a$ \quad (rispetta la deadline se $R \le D$) \\
+        lateness & $L = f - d$ \quad (negativa: in anticipo; 0: giusto in tempo; positiva: deadline mancata) \\
+        \hline
+    \end{tabular}
+\end{center}
+Attenzione: qui ``response time'' è $f - a$, cioè il \emph{turnaround} dell'Unità 1.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/u3_notation.png}
+    \caption{In alto, i tre tipi di task: rilasci regolari (periodico), con un intervallo minimo (sporadico) o senza alcun vincolo (aperiodico). In basso, il job $B_2$ dell'esercizio sulla notazione: $a = 8$, $s = 10$, $f = 11$, $d = 16$, quindi $R = 3$ e $L = -5$.}
+\end{figure}
+
+\subsubsection*{5. Utilizzazione, iperperiodo, WCET}
+\paragraph*{Utilizzazione.} Un task occupa la frazione $C/T$ della CPU; l'intero insieme di task ha $U = \sum C_i/T_i$.
+\begin{itemize}
+    \item Se $U > 1$, nessun algoritmo può rispettare tutte le deadline su una CPU: ci si \textbf{ferma}, senza disegnare nulla (all'esame le domande successive non richiedono risposta).
+    \item $U \le 1$ è \textbf{necessaria ma non sufficiente}: gli algoritmi semplici possono fallire anche con $U < 1$, sotto-utilizzando la CPU.
+    \item Nella realtà, se $U > 1$: il periodo è fissato dai requisiti e non si cambia; $C$ si riduce con codice migliore, ma fino a un limite. La soluzione tipica è una CPU un po' più potente (e più costosa).
+\end{itemize}
+
+\paragraph*{Iperperiodo.} $H = \mathrm{LCM}(T_1, \dots, T_n)$: con fasi nulle lo schedule si ripete identico ogni $H$, quindi basta disegnarlo in $[0, H)$, dove il task $i$ ha $H/T_i$ job. Esempio: con periodi 5, 10, 20 si ha $H = 20$, cioè 4, 2 e 1 job. La schedulabilità si verifica \textbf{con una formula} (per gli algoritmi che ne hanno una) oppure \textbf{empiricamente}, disegnando un iperperiodo.
+
+\paragraph*{WCET.} Un task ha più percorsi di esecuzione, e la garanzia deve valere per tutti: si pianifica sul caso peggiore, mai sulla media. Con la media, proprio il raro job lento (es.\ quando si registra un errore) mancherebbe la deadline. Calcolare il WCET esattamente è impossibile per programmi complessi: lo si stima misurando o con la statistica, e quando la sicurezza conta lo si \textbf{sovrastima} (anche di 3--4 volte), pagando con CPU sprecata. Nel corso il WCET è sempre dato.
+
+\subsubsection*{6. Timeline scheduling (cyclic executive)}
+È l'algoritmo meno efficiente e senza una formula di schedulabilità, ma è semplicissimo e \textbf{prevedibilissimo}: lo usano quasi tutti i prodotti avionici.
+\begin{itemize}
+    \item Lo schedule si calcola \textbf{offline}, una volta sola, e diventa una tabella fissa: a run time nessuno decide niente.
+    \item Il \textbf{minor cycle} (frame) è $m = \mathrm{GCD}(T)$: ogni rilascio cade sul bordo di un frame. Il \textbf{major cycle} è $M = \mathrm{LCM}(T) = H$: si riempiono $M/m$ frame e poi tutto si ripete.
+    \item \textbf{Regole del corso}, frame per frame:
+    \begin{itemize}
+        \item si considerano i job già rilasciati e non ancora eseguiti, \textbf{periodo più corto prima} (a parità di periodo, l'identificatore più basso);
+        \item un job si piazza solo se \textbf{entra tutto}, perché non attraversa mai il bordo di un frame; se non entra, aspetta un frame successivo, e si provano comunque i job seguenti;
+        \item si usa il primo slot libero e non c'è preemption; il resto del frame resta idle.
+    \end{itemize}
+    \item Lo schedule è \textbf{fattibile} se ogni job sta in un frame che finisce entro la sua deadline; altrimenti c'è una deadline mancata.
+\end{itemize}
+
+\paragraph*{Esempio.} A (2, 5), B (2, 10), C (2, 20): $U = 0.7$, $m = 5$, $M = 20$, schedule \texttt{AABB.AACC.AABB.AA...}. Nel frame 0 $C_1$ non entra (resta 1 unità): va nel frame 1, dopo $A_2$, che ha il periodo più corto.
+
+\paragraph*{Implementazione.} Bastano un timer che segnala l'inizio di ogni frame e un ciclo infinito che chiama, frame dopo frame, una funzione con i job di quel frame:
+\begin{itemize}
+    \item \texttt{wait\_frame} aspetta il bordo del frame successivo; il flag è \texttt{volatile}, perché lo modifica l'interrupt e il compilatore non deve tenerne una copia;
+    \item non servono context switch, TCB o code: tutti i task usano un unico stack;
+    \item se il flag è già alzato quando si arriva a \texttt{wait\_frame}, c'è un \textbf{overrun} da segnalare.
+\end{itemize}
+
+\paragraph*{Pro e contro.}
+\begin{itemize}
+    \item \textbf{Pro}: è semplicissimo, tutto è verificato offline, non ci sono preemption (quindi nessun conflitto sui dati condivisi) né costi di switch.
+    \item \textbf{Fragile}: un nuovo task, o un $C$ o un $T$ cambiato, può stravolgere tutta la tabella.
+    \item \textbf{Job troppo lunghi}: un job più lungo di un frame va spezzato a mano.
+    \item \textbf{Eventi aperiodici}: si gestiscono solo con il polling.
+    \item \textbf{Overrun}: un job che dura più del previsto ritarda tutti i frame seguenti.
+\end{itemize}
+
+\paragraph*{Periodi non armonici.} I periodi sono armonici se ognuno divide quelli più lunghi (5, 10, 20). Se non lo sono, il GCD diventa piccolo (con 5, 7, 11 è 1, e nessun job con $C \ge 2$ entra in un frame) e l'LCM enorme (385 frame). Due rimedi:
+\begin{itemize}
+    \item \textbf{spezzare} un task lungo in parti, dando alla prima l'identificatore più basso, così le parti girano nell'ordine giusto;
+    \item \textbf{accorciare} qualche periodo fino a renderlo armonico: è sempre lecito, ma $U$ cresce.
+\end{itemize}
+Esempio: A (1, 4) e B (3, 6) danno frame da 2 unità, in cui B non entra mai: $B_1$ manca la deadline a 6, pur con $U = 0.75$. Con il periodo di B ridotto a 4 lo schedule diventa \texttt{ABBB}, fattibile, con $U = 1$.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/u3_timeline_frames.png}
+    \caption{L'esercizio ``a frame too small''. Con $U = 11/12$, D ($C = 4$) non entra in nessun frame e $D_1$ manca la deadline a 24: ci sono 6 unità idle in tutto, ma mai 4 nello stesso frame. Spezzando D in D ed E (2 unità ciascuno) lo schedule diventa fattibile, e le due parti girano nell'ordine giusto.}
+\end{figure}
+
+\subsubsection*{7. Il metodo completo e \texttt{schedsim}}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{contents/images/week-05/u3_method.png}
+    \caption{Come si risolve un esercizio real-time: prima $U$ (se è maggiore di 1 ci si ferma), poi $H$, i frame riempiti con le regole del corso, la fattibilità, i parametri dei job, e infine le risposte nel formato d'esame.}
+\end{figure}
+
+\texttt{schedsim} (\texttt{course-material/tools/schedsim/}, Python 3, nessuna installazione) applica gli algoritmi del corso con le stesse regole di parità. Va usato \emph{dopo} aver risolto l'esercizio su carta:
+\begin{itemize}
+    \item \texttt{explain} mostra ogni passo, come andrebbe scritto all'esame;
+    \item \texttt{solve} dà solo le risposte;
+    \item \texttt{check} corregge un file di risposte e indica il primo slot sbagliato e la regola che lo decide;
+    \item \texttt{run} disegna solo il Gantt; \texttt{generate timeline --seed N} crea un esercizio nuovo per allenarsi.
+\end{itemize}
+
+\paragraph*{Formato delle risposte (anche all'esame).} Una risposta per riga, \texttt{chiave=valore}, senza spazi:
+\begin{itemize}
+    \item \texttt{schedule=} con un carattere per unità di tempo e \texttt{.} quando la CPU è idle;
+    \item \texttt{U=} come frazione (\texttt{7/10}) oppure con tre decimali (\texttt{0.700});
+    \item \texttt{feasible=yes} oppure \texttt{feasible=no};
+    \item \texttt{first\_miss=} nella forma \texttt{D@24}, oppure \texttt{none};
+    \item \texttt{R\_D1=7} e \texttt{L\_D1=-9} quando l'esercizio chiede i parametri di un job;
+    \item per FCFS, round robin e priorità: \texttt{W\_<id>}, \texttt{TA\_<id>}, \texttt{avgW}, \texttt{avgTA}.
+\end{itemize}
+
+All'esame il file viene corretto automaticamente con \texttt{schedsim check}: se il formato è sbagliato, l'esercizio risulta sbagliato anche con la soluzione giusta.
