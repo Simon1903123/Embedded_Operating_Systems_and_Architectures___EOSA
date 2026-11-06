@@ -2,8 +2,12 @@
 \documentclass[a4paper, twoside, openright]{report}
 % character encoding
 \usepackage[utf8]{inputenc}
-% text encoding
+% text encoding e font vettoriali (Latin Modern al posto dei font bitmap Type 3)
 \usepackage[T1]{fontenc}
+\usepackage{lmodern}
+% ricerca e copia corrette nel PDF (legature fi/ffi, trattini, accenti)
+\input{glyphtounicode}
+\pdfgentounicode=1
 % borders size
 \usepackage[a4paper,top=2.5cm,bottom=2.5cm,left=3cm,right=3cm]{geometry}
 % font size
@@ -18,20 +22,35 @@
 \usepackage{lipsum}
 % per ruotare le immagini
 \usepackage{rotating}
-% per modificare l'header delle pagine 
+% per modificare l'header delle pagine
 \usepackage{fancyhdr}
 % per allineare in modo giustificato
 \usepackage{ragged2e}
 \justifying
-% uso delle immagini
+% giustificazione migliore, meno righe che sporgono (richiede font vettoriali: lmodern)
+\usepackage{microtype}
+
+% codice: listing in carattere monospaziato, righe lunghe spezzate, -- non diventa una lineetta
+\usepackage{listings}
+\lstset{basicstyle=\ttfamily\small, columns=fullflexible,
+        keepspaces=true, breaklines=true, upquote=true}
+% verbatim (Gantt, file di risposta, output) in corpo ridotto, perche' stiano nella pagina
+\makeatletter
+\renewcommand{\verbatim@font}{\normalfont\ttfamily\footnotesize}
+% per i pochi verbatim ancora troppo larghi: {\verbatimscriptsize \begin{verbatim}...\end{verbatim}}
+\newcommand{\verbatimscriptsize}{\def\verbatim@font{\normalfont\ttfamily\scriptsize}}
+\makeatother
+% evita che un'etichetta (es. "Solution.") resti sola a fondo pagina
+\usepackage{needspace}
+% percorsi e nomi di file spezzabili a fine riga: \path{...}
+\usepackage{url}
+
+% uso delle immagini (cerca anche in contents/, dove stanno le immagini dei capitoli)
 \usepackage{graphicx}
+\graphicspath{{contents/}{./}}
 \usepackage{float}
 % uso dei colori
-\usepackage[dvipsnames, table]{xcolor}         
-% uso dei listing per il codice
-\usepackage{listings}          
-% per inserire gli hyperlinks tra i vari elementi del testo 
-\usepackage[colorlinks=true, allcolors=black]{hyperref}    
+\usepackage[dvipsnames, table]{xcolor}
 % diversi tipi di sottolineature
 \usepackage[normalem]{ulem}
 % package e comando per creare pagine vuote
@@ -42,12 +61,11 @@
     \addtocounter{page}{-1}%
     \newpage
 }
-    
+
 % package per creare comandi personalizzati
 \usepackage{xpatch}
 % package helper per le liste puntate
 \usepackage{enumitem}
-% package per l'utilizzo dei colori
 % package per l'highlighting del codice
 \usepackage{minted}
 % package per gestire le caption
@@ -59,7 +77,8 @@
 \usepackage{multirow}
 % per creare i tree di directory
 \usepackage{dirtree}
-\setcounter{tocdepth}{4}
+% indice: capitoli, sezioni e sottosezioni (senza i \paragraph)
+\setcounter{tocdepth}{2}
 
 % per le icone a fianco dei titoli di sezione
 \usepackage{etoolbox}
@@ -70,15 +89,15 @@
 
 \usepackage{amsmath}
 
-% ---- Pacchetti necessari alla tabella (copiali nel preambolo delle dispense) ----
-\usepackage{longtable}
-\usepackage{booktabs}
-\usepackage{array}
-\usepackage[table]{xcolor}
+% ---- Pacchetti necessari alla tabella ----
+\usepackage{booktabs}  % Per linee più eleganti (\toprule, \midrule)
+\usepackage{array}     % Per una gestione avanzata delle colonne
 
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta, patterns}
 
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18} % Usa la versione più recente di pgfplots
 
 \setlength{\emergencystretch}{3em}
 
@@ -100,29 +119,14 @@
 % "1u << n" senza che << diventi una legatura
 \newcommand{\sh}[1]{\texttt{1u <\kern0pt< #1}}
 
-
-\usepackage{booktabs}  % Per linee più eleganti (\toprule, \midrule)
-\usepackage{array}     % Per una gestione avanzata delle colonne
-\usepackage{url}
-\usepackage{subcaption}
-% 1. Per il disegno (l'ambiente tikzpicture)
-\usepackage{tikz}
-
-% 2. Per l'opzione [H] che forza la figura esattamente dove l'hai scritta
-\usepackage{float}
-
-\usepackage{pgfplots}
-\pgfplotsset{compat=1.18} % Usa la versione più recente di pgfplots
-
 \captionsetup[table]{labelformat=simple, labelsep=colon}
 
-
 % Definizioni dei colori
-\definecolor{colGreen}{RGB}{198, 224, 180}   
-\definecolor{headBlue}{RGB}{189, 215, 238}   
-\definecolor{headOrange}{RGB}{244, 176, 132} 
-\definecolor{topRed}{RGB}{192, 0, 0}         
-\definecolor{topGray}{RGB}{231, 230, 230}    
+\definecolor{colGreen}{RGB}{198, 224, 180}
+\definecolor{headBlue}{RGB}{189, 215, 238}
+\definecolor{headOrange}{RGB}{244, 176, 132}
+\definecolor{topRed}{RGB}{192, 0, 0}
+\definecolor{topGray}{RGB}{231, 230, 230}
 
 % Comandi personalizzati
 \newcommand{\inv}[1]{\cellcolor{colGreen}\textbf{Invio #1}}
@@ -152,7 +156,7 @@
 
 % comandi per cambiare temporaneamente la lingua
 % abstract in inglese, al fine di cambiarne il titolo
-\xpretocmd{\abstract}{\selectlanguage{english}}{}{} 
+\xpretocmd{\abstract}{\selectlanguage{english}}{}{}
 \xapptocmd{\endabstract}{\selectlanguage{italian}}{}{}
 
 % formattazione e highlight del codice
@@ -167,23 +171,36 @@
 % environment per impostare il codice in piu' pagine
 \newenvironment{code}{\captionsetup{type=listing}}{}
 
+% per inserire gli hyperlinks tra i vari elementi del testo (caricato per ultimo)
+\usepackage[colorlinks=true, allcolors=black]{hyperref}
+\hypersetup{
+    pdftitle={Embedded Operating System and Architecture},
+    pdfauthor={Stridi Simone}
+}
+
 % -----------------------------------------------------------------
 \begin{document}
 
 \include{contents/TitlePage}
 \afterpage{\blankpage}
 
-\tableofcontents%\begin{adjustwidth}{0cm}{1.8cm}
+% frontespizio e indice con numeri romani, i capitoli ripartono da 1
+\pagenumbering{roman}
+\tableofcontents
+%\begin{adjustwidth}{0cm}{1.8cm}
 %\makeatletter
 %\@starttoc{toc}
 %\makeatother
 %\end{adjustwidth}
+\cleardoublepage
+\pagenumbering{arabic}
 
 %\include{contents/week-01_Intro_and_toolchain}
 %\include{contents/week-02_Boot_and_CPU_Configuration}
 %\include{contents/week-03_IO_and_Interrupts}
 %\include{contents/week-04_MR_Management_and_Protection}
-\include{contents/week-05_scheduling_p1}
+%\include{contents/week-05_scheduling_p1}
+\include{contents/week-06_scheduling_p2}
 %\include{contents/exercises}
 
 \end{document}
