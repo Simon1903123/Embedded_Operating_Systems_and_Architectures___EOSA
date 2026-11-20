@@ -8,18 +8,23 @@
 % ricerca e copia corrette nel PDF (legature fi/ffi, trattini, accenti)
 \input{glyphtounicode}
 \pdfgentounicode=1
+% colori: va caricato con le sue opzioni PRIMA di minted, tikz e pgfplots,
+% che caricano xcolor da soli (altrimenti: "Option clash for package xcolor")
+\usepackage[dvipsnames, table]{xcolor}
 % borders size
 \usepackage[a4paper,top=2.5cm,bottom=2.5cm,left=3cm,right=3cm]{geometry}
 % font size
 \usepackage[fontsize=12pt]{scrextend}
-% language of text
-\usepackage[english]{babel}
+% lingue del testo: l'ultima e' la lingua principale (italiano, con la sua sillabazione);
+% l'inglese serve all'abstract (\selectlanguage{english} piu' sotto)
+\usepackage[english,italian]{babel}
 % lingua per la bibliografia
 \usepackage[fixlanguage]{babelbib}
 % package per generare testo fittizio. Potrebbe essere
 % utile nel controllare quanto un capitolo potrebbe essere
 % grande e quindi quanto occupa nella pagina
 \usepackage{lipsum}
+
 % per ruotare le immagini
 \usepackage{rotating}
 % per modificare l'header delle pagine
@@ -31,6 +36,7 @@
 \usepackage{microtype}
 
 % codice: listing in carattere monospaziato, righe lunghe spezzate, -- non diventa una lineetta
+% (\lstset va dopo \usepackage{listings}, altrimenti e' un comando non definito)
 \usepackage{listings}
 \lstset{basicstyle=\ttfamily\small, columns=fullflexible,
         keepspaces=true, breaklines=true, upquote=true}
@@ -49,8 +55,6 @@
 \usepackage{graphicx}
 \graphicspath{{contents/}{./}}
 \usepackage{float}
-% uso dei colori
-\usepackage[dvipsnames, table]{xcolor}
 % diversi tipi di sottolineature
 \usepackage[normalem]{ulem}
 % package e comando per creare pagine vuote
@@ -66,7 +70,7 @@
 \usepackage{xpatch}
 % package helper per le liste puntate
 \usepackage{enumitem}
-% package per l'highlighting del codice
+% package per l'highlighting del codice (compilare con -shell-escape)
 \usepackage{minted}
 % package per gestire le caption
 \usepackage{caption}
@@ -77,6 +81,7 @@
 \usepackage{multirow}
 % per creare i tree di directory
 \usepackage{dirtree}
+\usepackage{amssymb}
 % indice: capitoli, sezioni e sottosezioni (senza i \paragraph)
 \setcounter{tocdepth}{2}
 
@@ -200,8 +205,11 @@
 %\include{contents/week-03_IO_and_Interrupts}
 %\include{contents/week-04_MR_Management_and_Protection}
 %\include{contents/week-05_scheduling_p1}
-\include{contents/week-06_scheduling_p2}
+%\include{contents/week-06_scheduling_p2}
+\include{contents/week-07_synchronization_freertos}
+\include{contents/week-08_synchronization_communication}
 %\include{contents/exercises}
+%\include{contents/project}
 
 \end{document}
 % -----------------------------------------------------------------
